@@ -1,0 +1,43 @@
+[package]
+name = "data-commons-search-api"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+readme.workspace = true
+license-file.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+rmcp = { version = "0.3", features = [
+    "client",
+    "reqwest",
+    "transport-streamable-http-client",
+    "transport-child-process",
+    "tower",
+    # "auth"
+] }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+utoipa = { version = "5", features = ["macros", "axum_extras", "debug"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+utoipa-axum = { version = "0.2" }
+llm = { version = "1.3", features = ["mistral"] }
+# https://github.com/graniet/llm https://github.com/graniet/llm/blob/main/examples/openai_example.rs
+# Use tool calling with tools extracted from MCP server
+# https://github.com/graniet/llm/blob/main/examples/google_tool_calling_example.rs
+# serde.workspace = true
+# serde_json.workspace = true
+# anyhow.workspace = true
+# tracing.workspace = true
+# tracing-subscriber.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "std",
+    "fmt",
+] }
+axum-openapi3 = "0.2"

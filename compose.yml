@@ -1,0 +1,23 @@
+services:
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: mcp
+    ports:
+      - "8000:8000"
+    environment:
+      - RUST_LOG=info
+
+  search-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    ports:
+      - "3000:3000"
+    environment:
+      - RUST_LOG=info
+      - MCP_HOST=mcp
+    env_file:
+      - .env
