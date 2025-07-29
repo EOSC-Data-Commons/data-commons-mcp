@@ -1,13 +1,15 @@
-# 🔭 EOSC Data Commons Conversational Search
+# 🔭 EOSC Data Commons MCP server
 
-An API to search data from various open access data publishers using natural language, implemented as a web service querying a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, developed for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/).
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with an HTTP API endpoint to access data from various open access data publishers, developed for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/).
 
-## 🧩 Components
+## 🧩 Endpoints
 
-- **MCP server** to search for relevant data using the EOSC Data Commons search APU based on the user question
+The HTTP API comprises 2 main endpoints:
+
+- `/mcp`: **MCP server** to search for relevant data using the EOSC Data Commons search APU based on the user question
   - Use [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) with Streamable HTTP transport
 
-- **HTTP API** that enable easily querying the MCP server with a LLM provider from the public webapp
+- `/search`: regular **HTTP POST** JSON that enables querying the MCP server with a LLM provider
   - Use [`axum`](https://github.com/tokio-rs/axum), [`utoipa`](https://github.com/juhaku/utoipa) for OpenAPI spec generation, [`llm`](*https://github.com/graniet/llm*) to interact with LLM providers (e.g. [Mistral](https://admin.mistral.ai/organization/api-keys))
 
 
@@ -28,35 +30,60 @@ MISTRAL_API_KEY = "YOUR_API_KEY"
 MISTRAL_MODEL = "mistral-medium-latest"
 ```
 
-### ⚡️ Start servers
+### ⚡️ Start server
 
-Start the **MCP server** at http://localhost:8000/mcp
-
-```sh
-cargo run -p data-commons-mcp
-```
-
-> See the [MCP server readme](/crates/data-commons-mcp) for more details on how to connect with MCP clients.
-
-Start the **HTTP API** at http://localhost:3000/docs, alongside the MCP server:
+Start the **MCP server** in dev at http://localhost:8000/mcp, with OpenAPI UI at http://localhost:8000/docs
 
 ```sh
-cargo run -p data-commons-search-api
+cargo run
 ```
 
 > Example `curl` request:
 >
 > ```sh
-> curl -X POST http://127.0.0.1:3000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '[{"role": "user", "content": "data about insulin in EU"}]'
+> curl -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '[{"role": "user", "content": "data about insulin in EU"}]'
 > ```
+
+### 🔌 Connect MCP client
+
+Follow the instructions of your client, and use the `/mcp` URL of your deployed server (e.g. http://127.0.0.1:8000/mcp)
+
+#### 🐙 VSCode GitHub Copilot
+
+Add a new MCP server through the VSCode UI:
+
+- Open the Command Palette (`ctrl+shift+p` or `cmd+shift+p`)
+- Search for `MCP: Add Server...`
+- Choose `HTTP`, and provide the MCP server URL http://127.0.0.1:8000/mcp
+
+Your `mcp.json` should look like:
+
+```json
+{
+    "servers": {
+        "data-commons-mcp-server": {
+            "url": "http://127.0.0.1:8000/mcp",
+            "type": "http"
+        }
+    },
+    "inputs": []
+}
+```
 
 ### 📦 Build for production
 
-Build binaries in `target/prod/`
+Build binary in `target/release/`
 
 ```sh
 cargo build --release
 ```
+
+> Start the server with:
+>
+> ```sh
+> chmod +x target/release/data-commons-mcp
+> ./target/release/data-commons-mcp
+> ```
 
 ### 🐳 Deploy with Docker
 
@@ -66,7 +93,7 @@ Create a `.env` file with the API keys:
 MISTRAL_API_KEY=YOUR_API_KEY
 ```
 
-Build and deploy the 2 services:
+Build and deploy the service:
 
 ```sh
 docker compose up
@@ -76,13 +103,13 @@ docker compose up
 
 Automatically format the codebase using `rustfmt`:
 
-```bash
+```sh
 cargo fmt
 ```
 
 Lint with `clippy`:
 
-```bash
+```sh
 cargo clippy --all
 ```
 
@@ -90,14 +117,13 @@ cargo clippy --all
 
 Check the dependency supply chain: licenses (only accept dependencies with OSI or FSF approved licenses), and vulnerabilities (CVE advisories).
 
-```bash
+```sh
 cargo deny check
 ```
 
 Make sure dependencies have been updated:
 
-```bash
+```sh
 cargo update
-cargo outdated
 ```
 

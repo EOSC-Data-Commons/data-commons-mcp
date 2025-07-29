@@ -4,27 +4,21 @@ use axum::{
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
-use utoipa::{OpenApi, ToSchema};
-use utoipa_axum::router::OpenApiRouter;
-use utoipa_axum::routes;
-use utoipa_swagger_ui::SwaggerUi;
-
-// OpenAPI generation: https://github.com/juhaku/utoipa/blob/master/examples/axum-multipart/src/main.rs
-// MCP client: https://github.com/modelcontextprotocol/rust-sdk/blob/main/examples/clients/src/streamable_http.rs
+use utoipa::ToSchema;
 
 use llm::{
-    FunctionCall, ToolCall,
+    // FunctionCall, ToolCall,
     builder::{FunctionBuilder, LLMBackend, LLMBuilder},
     chat::ChatMessage,
 };
+
 use rmcp::{
     ServiceExt,
     model::{CallToolRequestParam, ClientCapabilities, ClientInfo, Implementation},
     transport::StreamableHttpClientTransport,
 };
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-const ADDRESS: &str = "0.0.0.0:3000";
+pub const ADDRESS: &str = "0.0.0.0:8000";
 const PROMPT_INTRO: &str = "Given the user question and datasets retrieved from the search API, summarize the findings in 1 sentence, and suggest which datasets might be the most interesting to answer the user question:\n";
 const DEFAULT_MODEL: &str = "mistral-small-latest";
 // const DEFAULT_MODEL: &str = "mistral-medium-latest";
@@ -40,20 +34,13 @@ pub struct Message {
     pub content: String,
 }
 
-/// Represents a response from the chat
-#[derive(Debug, Serialize, ToSchema)]
-pub struct ChatResponse {
-    pub role: String,
-    pub content: String,
-}
-
-/// Search data relevant to a user question in a conv
+/// Search data relevant to a user question in a conversation
 #[utoipa::path(
     post,
     path = "/search",
     request_body(content = Vec<Message>, description = "List of messages in the chat"),
 )]
-async fn search_handler(
+pub async fn search_handler(
     headers: HeaderMap,
     Json(messages): Json<Vec<Message>>,
 ) -> impl IntoResponse {
@@ -63,17 +50,19 @@ async fn search_handler(
         println!("Unauthorized access");
         // return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "unauthorized"})));
     }
+    let api_key = match std::env::var("MISTRAL_API_KEY") {
+        Ok(key) => key,
+        Err(_) => {
+            // eprintln!("MISTRAL_API_KEY environment variable not set");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "MISTRAL_API_KEY environment variable not set"})),
+            );
+        }
+    };
 
     // Connect to MCP server
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| format!("info,{}=debug", env!("CARGO_CRATE_NAME")).into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-    let mcp_host = std::env::var("MCP_HOST").unwrap_or("127.0.0.1".into());
-    let transport = StreamableHttpClientTransport::from_uri(format!("http://{mcp_host}:8000/mcp"));
+    let transport = StreamableHttpClientTransport::from_uri(format!("http://{ADDRESS}/mcp"));
     let client_info = ClientInfo {
         protocol_version: Default::default(),
         capabilities: ClientCapabilities::default(),
@@ -94,7 +83,6 @@ async fn search_handler(
     // tracing::info!("Connected to server: {server_info:#?}");
 
     // Configure Mistral LLM client with dynamic tools from MCP
-    let api_key = std::env::var("MISTRAL_API_KEY").unwrap_or("your-mistral-api-key".into());
     let llm_model = std::env::var("MISTRAL_MODEL").unwrap_or(DEFAULT_MODEL.into());
     let llm_builder = LLMBuilder::new()
         .backend(LLMBackend::Mistral)
@@ -176,6 +164,9 @@ async fn search_handler(
 
     // // Send chat request with tools is crashing after SEND
     // // Chat error: Response Format Error: Failed to decode Mistral API response: missing field `type` at line 1 column 376. Raw response: {"id":"294dbcf061ef4b1cb5f82eb09bae6bea","created":1753771664,"model":"mistral-medium-2505","usage":{"prompt_tokens":647,"total_tokens":664,"completion_tokens":17},"object":"chat.completion","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"jxsN10Cs0","function":{"name":"sum","arguments":"{\"a\": 5, \"b\": 76}"},"index":0}],"content":""}}]}
+    // // https://github.com/graniet/llm/blob/main/examples/openai_example.rs
+    // // Use tool calling with tools extracted from MCP server
+    // // https://github.com/graniet/llm/blob/main/examples/google_tool_calling_example.rs
     // println!("SEND");
     // match llm.chat_with_tools(&chat_messages, llm.tools()).await {
     //     Ok(response) => {
@@ -229,35 +220,4 @@ async fn search_handler(
         StatusCode::OK,
         Json(serde_json::to_value(all_msgs).unwrap()),
     )
-}
-
-/// OpenAPI documentation for the API
-#[derive(OpenApi)]
-#[openapi(
-    info(
-        title = "EOSC Data Commons Conversational Search API",
-        version = "1.0.0",
-        description = "Conversational Search API to find relevant data for a user question in natural language, developed for the EOSC Data Commons project"
-    ),
-    components(
-        // Additional schemas
-        schemas(ChatResponse)
-    )
-)]
-struct ApiDoc;
-
-#[tokio::main]
-async fn main() {
-    let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .routes(routes!(search_handler))
-        .split_for_parts();
-    let router = router.merge(SwaggerUi::new("/docs").url("/openapi.json", api));
-    let app = router.into_make_service();
-    let listener = tokio::net::TcpListener::bind(ADDRESS)
-        .await
-        .expect("failed to bind address");
-    println!("Starting web server on http://{ADDRESS}, OpenAPI UI on http://{ADDRESS}/docs");
-    axum::serve(listener, app)
-        .await
-        .expect("axum server failed");
 }

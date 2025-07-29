@@ -1,21 +1,32 @@
-[workspace]
-resolver = "2"
-members = [
-    "crates/data-commons-mcp",
-    "crates/search-api",
-]
-
-[workspace.package]
+[package]
+name = "data-commons-mcp"
 version = "0.1.0"
 authors = ["Vincent Emonet <vincent.emonet@gmail.com>"]
 edition = "2024"
-repository = "https://github.com/EOSC-Data-Commons/data-commons-conversational-search"
+repository = "https://github.com/EOSC-Data-Commons/eosc-data-commons-mcp"
 readme = "./README.md"
 license-file = "LICENSE"
 keywords = ["search", "llm", "mcp"]
 categories = ["science", "data"]
 
-[workspace.dependencies]
+[dependencies]
+rmcp = { version = "0.3", features = [
+    "server",
+    "transport-streamable-http-server",
+    "transport-sse-server",
+    "client",
+    "reqwest",
+    "transport-streamable-http-client",
+    "transport-child-process",
+    "tower",
+    # "auth"
+] }
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["macros"] }
+utoipa = { version = "5", features = ["macros", "axum_extras", "debug"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+utoipa-axum = { version = "0.2" }
+llm = { version = "1.3", features = ["mistral"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
@@ -25,6 +36,7 @@ tracing-subscriber = { version = "0.3", features = [
     "std",
     "fmt",
 ] }
+axum-openapi3 = "0.2"
 
 [profile.release]
 lto = true

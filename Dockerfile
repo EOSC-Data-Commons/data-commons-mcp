@@ -17,13 +17,7 @@ WORKDIR /app
 RUN cargo build --release
 
 
-FROM alpine AS api
-
-COPY --from=build /app/target/release/data-commons-search-api /
-EXPOSE 8000
-CMD ["./data-commons-search-api"]
-
-FROM alpine AS mcp
+FROM alpine AS runtime
 
 COPY --from=build /app/target/release/data-commons-mcp /
 EXPOSE 3000
