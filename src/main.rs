@@ -1,6 +1,5 @@
-use serde::{Deserialize, Serialize};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use utoipa::{OpenApi, ToSchema};
+use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use utoipa_swagger_ui::SwaggerUi;
@@ -16,26 +15,13 @@ use api::ADDRESS;
 // OpenAPI generation: https://github.com/juhaku/utoipa/blob/master/examples/axum-multipart/src/main.rs
 // MCP client: https://github.com/modelcontextprotocol/rust-sdk/blob/main/examples/clients/src/streamable_http.rs
 
-/// Represents a response from the chat
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct ChatResponse {
-    pub role: String,
-    pub content: String,
-}
-
 /// OpenAPI documentation for the API
 #[derive(OpenApi)]
-#[openapi(
-    info(
-        title = "EOSC Data Commons Conversational Search API",
-        version = "1.0.0",
-        description = "Conversational Search API to find relevant data for a user question in natural language, developed for the EOSC Data Commons project"
-    ),
-    components(
-        // Additional schemas
-        schemas(ChatResponse)
-    )
-)]
+#[openapi(info(
+    title = "EOSC Data Commons Conversational Search API",
+    version = "1.0.0",
+    description = "Conversational Search API to find relevant data for a user question in natural language, developed for the EOSC Data Commons project"
+))]
 struct ApiDoc;
 
 #[tokio::main]

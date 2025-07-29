@@ -20,5 +20,5 @@ RUN cargo build --release
 FROM alpine AS runtime
 
 COPY --from=build /app/target/release/data-commons-mcp /
-EXPOSE 3000
+EXPOSE 8000
 CMD ["./data-commons-mcp"]

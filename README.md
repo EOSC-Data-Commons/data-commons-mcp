@@ -1,5 +1,7 @@
 # 🔭 EOSC Data Commons MCP server
 
+[![Tests](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/test.yml)
+
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with an HTTP API endpoint to access data from various open access data publishers, developed for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/).
 
 ## 🧩 Endpoints
@@ -12,8 +14,9 @@ The HTTP API comprises 2 main endpoints:
 - `/search`: regular **HTTP POST** JSON that enables querying the MCP server with a LLM provider
   - Use [`axum`](https://github.com/tokio-rs/axum), [`utoipa`](https://github.com/juhaku/utoipa) for OpenAPI spec generation, [`llm`](*https://github.com/graniet/llm*) to interact with LLM providers (e.g. [Mistral](https://admin.mistral.ai/organization/api-keys))
 
-
 ## 🛠️ Development
+
+> Requirements: [Rust](https://www.rust-lang.org/tools/install)
 
 ### 📥 Install dependencies
 
@@ -22,12 +25,11 @@ rustup update
 cargo install cargo-deny
 ```
 
-Create a `.cargo/config.toml` file with your [Mistral API key](https://admin.mistral.ai/organization/api-keys) (required for the HTTP API in dev):
+Create a `.cargo/config.toml` file with your [Mistral API key](https://admin.mistral.ai/organization/api-keys):
 
 ```toml
 [env]
 MISTRAL_API_KEY = "YOUR_API_KEY"
-MISTRAL_MODEL = "mistral-medium-latest"
 ```
 
 ### ⚡️ Start server
@@ -41,12 +43,12 @@ cargo run
 > Example `curl` request:
 >
 > ```sh
-> curl -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '[{"role": "user", "content": "data about insulin in EU"}]'
+> curl -X POST http://localhost:8000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "data about insulin in EU"}], "model": "mistral-small-latest"}'
 > ```
 
 ### 🔌 Connect MCP client
 
-Follow the instructions of your client, and use the `/mcp` URL of your deployed server (e.g. http://127.0.0.1:8000/mcp)
+Follow the instructions of your client, and use the `/mcp` URL of your deployed server (e.g. http://localhost:8000/mcp)
 
 #### 🐙 VSCode GitHub Copilot
 
@@ -54,7 +56,7 @@ Add a new MCP server through the VSCode UI:
 
 - Open the Command Palette (`ctrl+shift+p` or `cmd+shift+p`)
 - Search for `MCP: Add Server...`
-- Choose `HTTP`, and provide the MCP server URL http://127.0.0.1:8000/mcp
+- Choose `HTTP`, and provide the MCP server URL http://localhost:8000/mcp
 
 Your `mcp.json` should look like:
 
@@ -62,7 +64,7 @@ Your `mcp.json` should look like:
 {
     "servers": {
         "data-commons-mcp-server": {
-            "url": "http://127.0.0.1:8000/mcp",
+            "url": "http://localhost:8000/mcp",
             "type": "http"
         }
     },
@@ -91,12 +93,21 @@ Create a `.env` file with the API keys:
 
 ```sh
 MISTRAL_API_KEY=YOUR_API_KEY
+SEARCH_API_KEY=SECRET_KEY_YOU_CAN_USE_IN_FRONTEND_TO_AVOID_SPAM
 ```
+
+> `SEARCH_API_KEY` can be used to add a layer of protection against bot that might spam the LLM, if not provided no API key willl be needed to query the API.
 
 Build and deploy the service:
 
 ```sh
 docker compose up
+```
+
+### 🤗 HuggingFace space
+
+```sh
+git clone https://huggingface.co/spaces/vemonet/data-commons-mcp hf-data-commons-mcp
 ```
 
 ### 🧼 Format & lint

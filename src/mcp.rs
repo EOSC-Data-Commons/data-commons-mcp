@@ -1,3 +1,4 @@
+use reqwest;
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, tool::Parameters},
@@ -6,6 +7,7 @@ use rmcp::{
     service::RequestContext,
     tool, tool_handler, tool_router,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -15,9 +17,57 @@ pub struct UserQuestion {
     // pub time: String, // time range relevant to the query
 }
 
+/// Represents a response from Zenodo API
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ZenodoResponse {
+    pub hits: ZenodoHits,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ZenodoHits {
+    pub total: u64,
+    pub hits: Vec<ZenodoRecord>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ZenodoRecord {
+    pub id: u64,
+    pub title: String,
+    pub description: Option<String>,
+    pub doi: Option<String>,
+    pub created: String,
+    pub modified: String,
+    #[serde(rename = "conceptdoi")]
+    pub concept_doi: Option<String>,
+    pub metadata: Option<ZenodoMetadata>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ZenodoMetadata {
+    pub title: String,
+    pub description: Option<String>,
+    pub creators: Option<Vec<ZenodoCreator>>,
+    pub publication_date: Option<String>,
+    pub keywords: Option<Vec<String>>,
+    pub subjects: Option<Vec<ZenodoSubject>>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ZenodoCreator {
+    pub name: Option<String>,
+    pub affiliation: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ZenodoSubject {
+    pub term: Option<String>,
+    pub identifier: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct DataCommonsTools {
     tool_router: ToolRouter<DataCommonsTools>,
+    http_client: reqwest::Client,
 }
 
 #[tool_router]
@@ -26,6 +76,7 @@ impl DataCommonsTools {
     pub fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
+            http_client: reqwest::Client::new(),
         }
     }
 
@@ -34,14 +85,115 @@ impl DataCommonsTools {
     }
 
     #[tool(description = "Search for data relevant to the user question")]
-    fn search_data(
+    async fn search_data(
         &self,
         Parameters(UserQuestion { question }): Parameters<UserQuestion>,
     ) -> Result<CallToolResult, McpError> {
-        // TODO: implement reqwest to Zenodo API using the question as input
-        tracing::info!("User question {}", question);
-        let datasets_found = "- Climate change in America from 1950 to 2010\n- Insulin level in Europe from 1960 to 2005";
-        Ok(CallToolResult::success(vec![Content::text(datasets_found)]))
+        // tracing::info!("User question: {}", question);
+        const ZENODO_API_URL: &str = "https://zenodo.org/api/records";
+        // Build query parameters
+        let mut params = vec![("q", question.as_str()), ("size", "10"), ("page", "1")];
+        // Add access token if available from environment
+        let access_token = std::env::var("ZENODO_ACCESS_TOKEN").ok();
+        if let Some(token) = &access_token {
+            params.push(("access_token", token.as_str()));
+        }
+        // Make the HTTP request
+        match self
+            .http_client
+            .get(ZENODO_API_URL)
+            .query(&params)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let error_text = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "Unknown error".to_string());
+                    tracing::error!("Zenodo API error: {} - {}", status, error_text);
+                    return Err(McpError::internal_error(
+                        format!(
+                            "API Error: {} {}",
+                            status.as_u16(),
+                            status.canonical_reason().unwrap_or("Unknown")
+                        ),
+                        Some(json!({
+                            "status": status.as_u16(),
+                            "error": error_text
+                        })),
+                    ));
+                }
+                match response.json::<ZenodoResponse>().await {
+                    Ok(zenodo_data) => {
+                        let mut datasets_found = String::new();
+                        if zenodo_data.hits.total == 0 {
+                            datasets_found.push_str("No datasets found for your query.");
+                        } else {
+                            datasets_found.push_str(&format!(
+                                "Found {} datasets:\n\n",
+                                zenodo_data.hits.total
+                            ));
+                            for (i, record) in zenodo_data.hits.hits.iter().enumerate() {
+                                if i >= 10 {
+                                    break;
+                                } // Limit to first 10 results
+                                let title = record
+                                    .metadata
+                                    .as_ref()
+                                    .and_then(|m| Some(&m.title))
+                                    .unwrap_or(&record.title);
+                                let description = record
+                                    .metadata
+                                    .as_ref()
+                                    .and_then(|m| m.description.as_ref())
+                                    .or(record.description.as_ref())
+                                    .map(|d| {
+                                        // Truncate long descriptions
+                                        if d.len() > 200 {
+                                            format!("{}...", &d[..300])
+                                        } else {
+                                            d.to_string()
+                                        }
+                                    })
+                                    .unwrap_or_else(|| "No description available".to_string());
+                                let doi_link = record
+                                    .doi
+                                    .as_ref()
+                                    .map(|doi| format!(" (DOI: https://doi.org/{doi})"))
+                                    .unwrap_or_else(|| format!(" (Zenodo ID: {})", record.id));
+                                let publication_date = record
+                                    .metadata
+                                    .as_ref()
+                                    .and_then(|m| m.publication_date.as_ref())
+                                    .unwrap_or(&record.created);
+                                datasets_found.push_str(&format!(
+                                    "**{}**{}\n   Published: {}\n   Description: {}\n\n",
+                                    title, doi_link, publication_date, description
+                                ));
+                            }
+                        }
+                        Ok(CallToolResult::success(vec![Content::text(datasets_found)]))
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to parse search API response: {}", e);
+                        Err(McpError::internal_error(
+                            "Failed to parse search API response",
+                            Some(json!({"error": e.to_string()})),
+                        ))
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to make request to the search API: {}", e);
+                Err(McpError::internal_error(
+                    "Failed to connect to the search API",
+                    Some(json!({"error": e.to_string()})),
+                ))
+            }
+        }
     }
 }
 
@@ -56,7 +208,7 @@ impl ServerHandler for DataCommonsTools {
                 .enable_tools()
                 .build(),
             server_info: Implementation::from_build_env(),
-            instructions: Some("This server provides a counter tool that can increment and decrement values. The counter starts at 0 and can be modified using the 'increment' and 'decrement' tools. Use 'get_value' to check the current count.".to_string()),
+            instructions: Some("This server provides a search tool that can search for scientific data in public repositories.".to_string()),
         }
     }
 

@@ -34,21 +34,32 @@ pub struct Message {
     pub content: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct SearchResponse {
+    pub messages: Vec<Message>,
+    #[schema(example = "mistral-small-latest")]
+    pub model: String,
+}
+
 /// Search data relevant to a user question in a conversation
 #[utoipa::path(
     post,
     path = "/search",
-    request_body(content = Vec<Message>, description = "List of messages in the chat"),
+    request_body(content = SearchResponse, description = "List of messages in the chat"),
 )]
 pub async fn search_handler(
     headers: HeaderMap,
-    Json(messages): Json<Vec<Message>>,
+    Json(mut resp): Json<SearchResponse>,
 ) -> impl IntoResponse {
-    // Validate API key
-    let auth_header = headers.get("authorization");
-    if auth_header.is_none() || auth_header.unwrap() != "SECRET_KEY" {
-        println!("Unauthorized access");
-        // return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "unauthorized"})));
+    // Validate API key only if SEARCH_API_KEY is set
+    if let Ok(secret_key) = std::env::var("SEARCH_API_KEY") {
+        let auth_header = headers.get("authorization");
+        if auth_header.is_none() || auth_header.unwrap().to_str().unwrap_or("") != secret_key {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "unauthorized"})),
+            );
+        }
     }
     let api_key = match std::env::var("MISTRAL_API_KEY") {
         Ok(key) => key,
@@ -60,6 +71,7 @@ pub async fn search_handler(
             );
         }
     };
+    // let llm_model = std::env::var("MISTRAL_MODEL").unwrap_or(DEFAULT_MODEL.into());
 
     // Connect to MCP server
     let transport = StreamableHttpClientTransport::from_uri(format!("http://{ADDRESS}/mcp"));
@@ -82,12 +94,17 @@ pub async fn search_handler(
     // let server_info = client.peer_info();
     // tracing::info!("Connected to server: {server_info:#?}");
 
+    // Convert input messages to llm ChatMessage format, replacing last message content with tool result
+    // let mut search_resp = SearchResponse {
+    //     model: llm_model,
+    //     messages: messages
+    // };
+
     // Configure Mistral LLM client with dynamic tools from MCP
-    let llm_model = std::env::var("MISTRAL_MODEL").unwrap_or(DEFAULT_MODEL.into());
     let llm_builder = LLMBuilder::new()
         .backend(LLMBackend::Mistral)
         .api_key(api_key)
-        .model(llm_model)
+        .model(&resp.model)
         .max_tokens(512)
         .temperature(0.7)
         .stream(false);
@@ -102,10 +119,11 @@ pub async fn search_handler(
     //         .json_schema(schema_value);
     //     llm_builder = llm_builder.function(function);
     // }
-    let llm = llm_builder.build().expect("Failed to build LLM");
+    let llm = llm_builder.build().expect("Failed to build LLM client");
 
     // Call a MCP tool
-    let last_message_content = messages
+    let last_message_content = resp
+        .messages
         .last()
         .map(|msg| msg.content.as_str())
         .unwrap_or("");
@@ -129,17 +147,13 @@ pub async fn search_handler(
         .collect::<Vec<_>>()
         .join(" ");
 
-    // Convert input messages to llm ChatMessage format, replacing last message content with tool result
-    let mut all_msgs = messages;
-    let chat_messages: Vec<ChatMessage> = all_msgs
+    let chat_messages: Vec<ChatMessage> = resp
+        .messages
         .iter()
         .enumerate()
         .map(|(i, msg)| {
-            let content = if i == all_msgs.len() - 1 {
-                &format!(
-                    "{}{}\n\nDatasets found:{}",
-                    PROMPT_INTRO, &msg.content, tool_result
-                )
+            let content = if i == resp.messages.len() - 1 {
+                &format!("{}{}\n\n{}", PROMPT_INTRO, &msg.content, tool_result)
             } else {
                 &msg.content
             };
@@ -151,10 +165,11 @@ pub async fn search_handler(
         })
         .collect();
 
+    // println!("Chat messages: {:#?}", chat_messages);
     // Send chat request using additional infos retrieved by the tool call
     match llm.chat(&chat_messages).await {
         Ok(response) => {
-            all_msgs.push(Message {
+            resp.messages.push(Message {
                 role: "assistant".into(),
                 content: response.text().unwrap_or_default(),
             });
@@ -216,8 +231,5 @@ pub async fn search_handler(
     //     },
     //     Err(e) => eprintln!("Chat error: {}", e),
     // }
-    (
-        StatusCode::OK,
-        Json(serde_json::to_value(all_msgs).unwrap()),
-    )
+    (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
 }
