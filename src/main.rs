@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
             .expect("Failed to install CTRL+C signal handler");
         tracing::info!("Received CTRL+C, shutting down gracefully...");
     };
-    println!(
+    tracing::info!(
         "Starting Streamable HTTP MCP server on http://{ADDRESS}/mcp, OpenAPI UI on http://{ADDRESS}/docs"
     );
     axum::serve(listener, app)

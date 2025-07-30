@@ -4,11 +4,13 @@
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with a HTTP POST endpoint to access data from various open access data publishers, developed for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/).
 
+It uses a search API and LLM to find relevant datasets for a user question.
+
 ## 🧩 Endpoints
 
 The HTTP API comprises 2 main endpoints:
 
-- `/mcp`: **MCP server** to search for relevant data using the EOSC Data Commons search APU based on the user question
+- `/mcp`: **MCP server** to search for relevant data to answer a user question using the EOSC Data Commons search API
   - Use [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) with Streamable HTTP transport
 
 - `/search`: regular **HTTP POST** JSON that enables querying the MCP server with a LLM provider
@@ -16,7 +18,10 @@ The HTTP API comprises 2 main endpoints:
 
 ## 🛠️ Development
 
-> Requirements: [Rust](https://www.rust-lang.org/tools/install)
+> Requirements: 
+>
+> - [Rust](https://www.rust-lang.org/tools/install)
+> - [API key for Mistral.ai](https://console.mistral.ai/api-keys) LLM, you can use the free tier, you just need to login
 
 ### 📥 Install dev dependencies
 
@@ -58,7 +63,7 @@ Add a new MCP server through the VSCode UI:
 - Search for `MCP: Add Server...`
 - Choose `HTTP`, and provide the MCP server URL http://localhost:8000/mcp
 
-Your `mcp.json` should look like:
+Your VSCode `mcp.json` should look like:
 
 ```json
 {
@@ -125,7 +130,7 @@ Check the dependency supply chain: licenses (only accept dependencies with OSI o
 cargo deny check
 ```
 
-Make sure dependencies have been updated:
+Update dependencies:
 
 ```sh
 cargo update

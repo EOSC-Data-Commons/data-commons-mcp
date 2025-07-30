@@ -1,11 +1,7 @@
 services:
   mcp:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     ports:
-      - "8000:8000"
-    environment:
-      - RUST_LOG=info
+      - 8000:8000
     env_file:
       - .env

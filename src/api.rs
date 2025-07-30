@@ -190,6 +190,7 @@ pub async fn search_handler(
     // }
     let llm = llm_builder.build().expect("Failed to build LLM client");
 
+    tracing::info!("Calling Zenodo API");
     // Call a MCP tool
     let last_message_content = resp
         .messages
@@ -205,6 +206,7 @@ pub async fn search_handler(
         })
         .await
         .expect("MCP tool call failed");
+    tracing::info!("Done calling Zenodo API");
     // Extract and parse structured JSON content from the tool result
     let tool_result_text = tool_results
         .content
@@ -276,6 +278,7 @@ pub async fn search_handler(
 
     // TODO: call with structured output to retrieve the list of most relevant according to the LLM
 
+    tracing::info!("Calling the LLM");
     // Send chat request using additional infos retrieved by the tool call
     match llm.chat(&chat_messages).await {
         Ok(response) => {
@@ -292,26 +295,33 @@ pub async fn search_handler(
                         });
 
                     // Create a lookup map for full dataset info by DOI
-                    let dataset_lookup: std::collections::HashMap<String, &DatasetSummary> = search_result
-                        .datasets
-                        .iter()
-                        .filter_map(|ds| ds.doi.as_ref().map(|doi| (format!("https://doi.org/{}", doi), ds)))
-                        .collect();
+                    let dataset_lookup: std::collections::HashMap<String, &DatasetSummary> =
+                        search_result
+                            .datasets
+                            .iter()
+                            .filter_map(|ds| {
+                                ds.doi
+                                    .as_ref()
+                                    .map(|doi| (format!("https://doi.org/{}", doi), ds))
+                            })
+                            .collect();
 
                     // Enrich LLM datasets with full metadata
                     let enhanced_datasets: Vec<EnhancedDataset> = llm_response
                         .datasets
                         .into_iter()
                         .filter_map(|llm_dataset| {
-                            dataset_lookup.get(&llm_dataset.doi).map(|full_dataset| EnhancedDataset {
-                                doi: llm_dataset.doi,
-                                score: llm_dataset.score,
-                                title: full_dataset.title.clone(),
-                                description: full_dataset.description.clone(),
-                                publication_date: full_dataset.publication_date.clone(),
-                                keywords: full_dataset.keywords.clone(),
-                                creators: full_dataset.creators.clone(),
-                                zenodo_url: full_dataset.zenodo_url.clone(),
+                            dataset_lookup.get(&llm_dataset.doi).map(|full_dataset| {
+                                EnhancedDataset {
+                                    doi: llm_dataset.doi,
+                                    score: llm_dataset.score,
+                                    title: full_dataset.title.clone(),
+                                    description: full_dataset.description.clone(),
+                                    publication_date: full_dataset.publication_date.clone(),
+                                    keywords: full_dataset.keywords.clone(),
+                                    creators: full_dataset.creators.clone(),
+                                    zenodo_url: full_dataset.zenodo_url.clone(),
+                                }
                             })
                         })
                         .collect();
@@ -341,7 +351,7 @@ pub async fn search_handler(
             );
         }
     }
-
+    tracing::info!("Done calling the LLM");
 
     // // Send chat request with tools is crashing after SEND
     // // Chat error: Response Format Error: Failed to decode Mistral API response: missing field `type` at line 1 column 376. Raw response: {"id":"294dbcf061ef4b1cb5f82eb09bae6bea","created":1753771664,"model":"mistral-medium-2505","usage":{"prompt_tokens":647,"total_tokens":664,"completion_tokens":17},"object":"chat.completion","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"jxsN10Cs0","function":{"name":"sum","arguments":"{\"a\": 5, \"b\": 76}"},"index":0}],"content":""}}]}
