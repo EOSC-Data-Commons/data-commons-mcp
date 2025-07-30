@@ -2,7 +2,7 @@
 
 [![Tests](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/test.yml)
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with an HTTP API endpoint to access data from various open access data publishers, developed for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/).
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with a HTTP POST endpoint to access data from various open access data publishers, developed for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/).
 
 ## 🧩 Endpoints
 
@@ -12,13 +12,13 @@ The HTTP API comprises 2 main endpoints:
   - Use [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) with Streamable HTTP transport
 
 - `/search`: regular **HTTP POST** JSON that enables querying the MCP server with a LLM provider
-  - Use [`axum`](https://github.com/tokio-rs/axum), [`utoipa`](https://github.com/juhaku/utoipa) for OpenAPI spec generation, [`llm`](*https://github.com/graniet/llm*) to interact with LLM providers (e.g. [Mistral](https://admin.mistral.ai/organization/api-keys))
+  - Use [`axum`](https://github.com/tokio-rs/axum), [`utoipa`](https://github.com/juhaku/utoipa) for OpenAPI spec generation, [`llm`](https://github.com/graniet/llm) to interact with LLM providers (e.g. [Mistral](https://admin.mistral.ai/organization/api-keys))
 
 ## 🛠️ Development
 
 > Requirements: [Rust](https://www.rust-lang.org/tools/install)
 
-### 📥 Install dependencies
+### 📥 Install dev dependencies
 
 ```sh
 rustup update
@@ -32,7 +32,7 @@ Create a `.cargo/config.toml` file with your [Mistral API key](https://admin.mis
 MISTRAL_API_KEY = "YOUR_API_KEY"
 ```
 
-### ⚡️ Start server
+### ⚡️ Start dev server
 
 Start the **MCP server** in dev at http://localhost:8000/mcp, with OpenAPI UI at http://localhost:8000/docs
 
@@ -83,7 +83,6 @@ cargo build --release
 > Start the server with:
 >
 > ```sh
-> chmod +x target/release/data-commons-mcp
 > ./target/release/data-commons-mcp
 > ```
 
@@ -102,12 +101,6 @@ Build and deploy the service:
 
 ```sh
 docker compose up
-```
-
-### 🤗 HuggingFace space
-
-```sh
-git clone https://huggingface.co/spaces/vemonet/data-commons-mcp hf-data-commons-mcp
 ```
 
 ### 🧼 Format & lint

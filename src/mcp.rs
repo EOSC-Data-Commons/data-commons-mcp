@@ -1,4 +1,3 @@
-use reqwest;
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, tool::Parameters},
@@ -15,6 +14,26 @@ pub struct UserQuestion {
     pub question: String,
     // pub topics: vec<String>, // potential topics and classes relevant to the query
     // pub time: String, // time range relevant to the query
+}
+
+/// Structured response for search results
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub total_found: u64,
+    pub query: String,
+    pub datasets: Vec<DatasetSummary>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DatasetSummary {
+    pub id: u64,
+    pub title: String,
+    pub description: String,
+    pub doi: Option<String>,
+    pub publication_date: String,
+    pub keywords: Option<Vec<String>>,
+    pub creators: Option<Vec<String>>,
+    pub zenodo_url: String,
 }
 
 /// Represents a response from Zenodo API
@@ -128,23 +147,18 @@ impl DataCommonsTools {
                 }
                 match response.json::<ZenodoResponse>().await {
                     Ok(zenodo_data) => {
-                        let mut datasets_found = String::new();
-                        if zenodo_data.hits.total == 0 {
-                            datasets_found.push_str("No datasets found for your query.");
-                        } else {
-                            datasets_found.push_str(&format!(
-                                "Found {} datasets:\n\n",
-                                zenodo_data.hits.total
-                            ));
-                            for (i, record) in zenodo_data.hits.hits.iter().enumerate() {
-                                if i >= 10 {
-                                    break;
-                                } // Limit to first 10 results
+                        let datasets: Vec<DatasetSummary> = zenodo_data
+                            .hits
+                            .hits
+                            .iter()
+                            .take(10) // Limit to first 10 results
+                            .map(|record| {
                                 let title = record
                                     .metadata
                                     .as_ref()
                                     .and_then(|m| Some(&m.title))
-                                    .unwrap_or(&record.title);
+                                    .unwrap_or(&record.title)
+                                    .clone();
                                 let description = record
                                     .metadata
                                     .as_ref()
@@ -152,30 +166,56 @@ impl DataCommonsTools {
                                     .or(record.description.as_ref())
                                     .map(|d| {
                                         // Truncate long descriptions
-                                        if d.len() > 200 {
+                                        if d.len() > 300 {
                                             format!("{}...", &d[..300])
                                         } else {
                                             d.to_string()
                                         }
                                     })
                                     .unwrap_or_else(|| "No description available".to_string());
-                                let doi_link = record
-                                    .doi
-                                    .as_ref()
-                                    .map(|doi| format!(" (DOI: https://doi.org/{doi})"))
-                                    .unwrap_or_else(|| format!(" (Zenodo ID: {})", record.id));
                                 let publication_date = record
                                     .metadata
                                     .as_ref()
                                     .and_then(|m| m.publication_date.as_ref())
-                                    .unwrap_or(&record.created);
-                                datasets_found.push_str(&format!(
-                                    "**{}**{}\n   Published: {}\n   Description: {}\n\n",
-                                    title, doi_link, publication_date, description
-                                ));
-                            }
-                        }
-                        Ok(CallToolResult::success(vec![Content::text(datasets_found)]))
+                                    .unwrap_or(&record.created)
+                                    .clone();
+                                let keywords =
+                                    record.metadata.as_ref().and_then(|m| m.keywords.clone());
+                                let creators = record
+                                    .metadata
+                                    .as_ref()
+                                    .and_then(|m| m.creators.as_ref())
+                                    .map(|creators| {
+                                        creators.iter().filter_map(|c| c.name.clone()).collect()
+                                    });
+                                DatasetSummary {
+                                    id: record.id,
+                                    title,
+                                    description,
+                                    doi: record.doi.clone(),
+                                    publication_date,
+                                    keywords,
+                                    creators,
+                                    zenodo_url: format!("https://zenodo.org/record/{}", record.id),
+                                }
+                            })
+                            .collect();
+                        let search_result = SearchResult {
+                            total_found: zenodo_data.hits.total,
+                            query: question.clone(),
+                            datasets,
+                        };
+
+                        // Return as JSON content
+                        let json_content =
+                            serde_json::to_string_pretty(&search_result).map_err(|e| {
+                                McpError::internal_error(
+                                    "Failed to serialize search results",
+                                    Some(json!({"error": e.to_string()})),
+                                )
+                            })?;
+
+                        Ok(CallToolResult::success(vec![Content::text(json_content)]))
                     }
                     Err(e) => {
                         tracing::error!("Failed to parse search API response: {}", e);
