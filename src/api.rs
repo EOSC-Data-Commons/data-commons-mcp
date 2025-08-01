@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::time::{SystemTime, UNIX_EPOCH};
 use utoipa::ToSchema;
+use axum::response::sse;
 
 use llm::{
     // FunctionCall, ToolCall,
@@ -121,6 +122,7 @@ pub async fn search_handler(
     }
 }
 
+/// Streaming search handler for SSE responses
 async fn streaming_search_handler(
     headers: HeaderMap,
     resp: SearchInput,
@@ -135,29 +137,17 @@ async fn streaming_search_handler(
             ).into_response();
         }
     }
-    let api_key = match std::env::var("MISTRAL_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "MISTRAL_API_KEY environment variable not set"})),
-            ).into_response();
-        }
-    };
-    let stream = create_search_stream(resp, api_key);
+    let stream = create_search_stream(resp);
     Sse::new(stream)
-        .keep_alive(
-            axum::response::sse::KeepAlive::new()
-                .interval(std::time::Duration::from_secs(1)),
-                // .text("keep-alive-text"),
-        )
+        // .keep_alive(
+        //     sse::KeepAlive::new()
+        //         .interval(std::time::Duration::from_secs(10)),
+        //         // .text("keep-alive-text"),
+        // )
         .into_response()
 }
 
-fn create_search_stream(
-    resp: SearchInput,
-    _api_key: String,
-) -> impl Stream<Item = Result<axum::response::sse::Event, Infallible>> {
+fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Event, Infallible>> {
     async_stream::stream! {
         let created = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -179,7 +169,7 @@ fn create_search_stream(
             Ok(client) => client,
             Err(e) => {
                 tracing::error!("client error: {:?}", e);
-                yield Ok(axum::response::sse::Event::default()
+                yield Ok(sse::Event::default()
                     .data(serde_json::to_string(&StreamChunk {
                         id: id.clone(),
                         object: "chat.completion.chunk".to_string(),
@@ -218,7 +208,7 @@ fn create_search_stream(
             Ok(results) => results,
             Err(e) => {
                 tracing::error!("MCP tool call failed: {}", e);
-                yield Ok(axum::response::sse::Event::default()
+                yield Ok(sse::Event::default()
                     .data(serde_json::to_string(&StreamChunk {
                         id: id.clone(),
                         object: "chat.completion.chunk".to_string(),
@@ -254,7 +244,7 @@ fn create_search_stream(
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Failed to parse search result JSON: {}", e);
-                yield Ok(axum::response::sse::Event::default()
+                yield Ok(sse::Event::default()
                     .data(serde_json::to_string(&StreamChunk {
                         id: id.clone(),
                         object: "chat.completion.chunk".to_string(),
@@ -276,7 +266,7 @@ fn create_search_stream(
 
         // Check if no datasets were found and return early
         if search_result.total_found == 0 || search_result.datasets.is_empty() {
-            yield Ok(axum::response::sse::Event::default()
+            yield Ok(sse::Event::default()
                 .data(serde_json::to_string(&StreamChunk {
                     id: id.clone(),
                     object: "chat.completion.chunk".to_string(),
@@ -296,7 +286,7 @@ fn create_search_stream(
         }
 
         // Stream the first chunk with initial datasets (without scores)
-        yield Ok(axum::response::sse::Event::default()
+        yield Ok(sse::Event::default()
             .event("zenodo_data")
             .data(serde_json::to_string(&ZenodoDataChunk {
                 datasets: search_result.datasets.clone(),
@@ -464,17 +454,15 @@ fn create_search_stream(
                         .partial_cmp(&score_a)
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
-
                 let res = SearchResponse {
                     datasets: search_result.datasets,
                     summary: llm_response.summary,
                 };
-
-                yield Ok(axum::response::sse::Event::default()
-                    .event("final_result")
+                // Stream response
+                yield Ok(sse::Event::default()
+                    .event("search_response")
                     .data(serde_json::to_string(&res).unwrap()));
-
-                yield Ok(axum::response::sse::Event::default()
+                yield Ok(sse::Event::default()
                     .data(serde_json::to_string(&StreamChunk {
                         id: id.clone(),
                         object: "chat.completion.chunk".to_string(),
@@ -505,11 +493,61 @@ fn create_search_stream(
     }
 }
 
-// TODO: remove to avoid duplicate? Or just call the streaming_search_handler, and construct the response to send
 async fn regular_search_handler(
     headers: HeaderMap,
     mut resp: SearchInput,
 ) -> impl IntoResponse {
+    // TODO: get the response by just calling the streaming function
+    // (can't find how to properly get the event data)
+    // // Create the stream using the same logic as streaming handler
+    // let stream = create_search_stream(resp);
+    // // Collect events from the stream and look for search_response
+    // let mut stream = Box::pin(stream);
+    // let mut search_response_data: Option<String> = None;
+    // while let Some(event_result) = stream.next().await {
+    //     let event = event_result.unwrap(); // Stream always returns Ok
+    //     tracing::info!("Received event: {:?}", event);
+    //     // We need to manually reconstruct the event to check its content
+    //     // The event is built with .event("search_response") and .data(json_string)
+    //     // Since we can't directly inspect the event type, we'll use debug output
+    //     let event_debug = format!("{event:?}");
+    //     // Check if this looks like a search_response event
+    //     if event_debug.contains("search_response") {
+    //         tracing::info!("Found search_response event: {}", event_debug);
+    //         // Extract data from debug string - look for the JSON data field
+    //         if let Some(data_start) = event_debug.find("data: Some(\"") {
+    //             let data_content = &event_debug[data_start + 12..];
+    //             if let Some(data_end) = data_content.find("\")") {
+    //                 let escaped_json = &data_content[..data_end];
+    //                 // Properly unescape the JSON string
+    //                 let unescaped_json = escaped_json
+    //                     .replace("\\\"", "\"")
+    //                     .replace("\\\\", "\\")
+    //                     .replace("\\n", "\n")
+    //                     .replace("\\r", "\r")
+    //                     .replace("\\t", "\t");
+    //                 // Try to parse as SearchResponse
+    //                 match serde_json::from_str::<SearchResponse>(&unescaped_json) {
+    //                     Ok(_) => {
+    //                         search_response_data = Some(unescaped_json);
+    //                         break;
+    //                     }
+    //                     Err(e) => {
+    //                         tracing::warn!("Failed to parse SearchResponse: {}", e);
+    //                         tracing::warn!("Unescaped JSON: {}", unescaped_json);
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+    // // If we found search response data, parse and return it
+    // if let Some(data) = search_response_data {
+    //     if let Ok(search_response) = serde_json::from_str::<SearchResponse>(&data) {
+    //         return (StatusCode::OK, Json(serde_json::json!(search_response)));
+    //     }
+    // }
+
     // Validate API key only if SEARCH_API_KEY is set
     if let Ok(secret_key) = std::env::var("SEARCH_API_KEY") {
         let auth_header = headers.get("authorization");
