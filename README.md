@@ -93,7 +93,7 @@ cargo build --release
 
 ### 🐳 Deploy with Docker
 
-Create a `.env` file with the API keys:
+Create a `keys.env` file with the API keys:
 
 ```sh
 MISTRAL_API_KEY=YOUR_API_KEY
