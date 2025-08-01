@@ -2,6 +2,8 @@ services:
   mcp:
     build: .
     ports:
-      - 8000:8000
+      - "127.0.0.1:8000:8000"
+    environment:
+      - RUST_LOG=info
     env_file:
       - .env
