@@ -25,7 +25,7 @@ pub struct SearchResult {
     pub datasets: Vec<Dataset>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]
 pub struct Dataset {
     #[schema(example = "5173026")]
     pub id: u64,

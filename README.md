@@ -48,7 +48,7 @@ cargo run
 > Example `curl` request:
 >
 > ```sh
-> curl -X POST http://localhost:8000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "data about insulin in EU"}], "model": "mistral-small-latest"}'
+> curl -X POST http://localhost:8000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "data about insulin in EU"}], "model": "mistral-small-latest", "stream": true}'
 > ```
 
 ### 🔌 Connect MCP client
