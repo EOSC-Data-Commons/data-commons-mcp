@@ -16,3 +16,28 @@ jobs:
       # - run: cargo fmt -- --check
       # - run: cargo clippy --all --all-targets --all-features
       - run: cargo build --release
+
+  docker:
+    name: 🐳 Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t data-commons-mcp .
+
+      - name: Test Docker image
+        run: |
+          CONTAINER_ID=$(docker run -d -p 8000:8000 data-commons-mcp)
+          echo "Started container: $CONTAINER_ID"
+          sleep 5
+          if docker ps | grep -q $CONTAINER_ID; then
+            echo "✅ Container is running successfully"
+            docker logs $CONTAINER_ID
+          else
+            echo "❌ Container failed to start or crashed"
+            docker logs $CONTAINER_ID
+            exit 1
+          fi
+          docker stop $CONTAINER_ID
+          docker rm $CONTAINER_ID

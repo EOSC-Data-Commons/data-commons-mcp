@@ -18,7 +18,7 @@ use rmcp::{
     transport::StreamableHttpClientTransport,
 };
 
-use crate::mcp::{DatasetSummary, SearchResult};
+use crate::mcp::{Dataset, SearchResult};
 
 pub const ADDRESS: &str = "0.0.0.0:8000";
 const SYSTEM_PROMPT: &str = "Given the user question and datasets retrieved from the search API, summarize the findings in 1 sentence, extract which datasets might be the most interesting to answer the user question, and give them a relevance score between 0 and 1";
@@ -37,33 +37,26 @@ pub struct Message {
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct SearchResponse {
+pub struct SearchInput {
     pub messages: Vec<Message>,
     #[schema(example = "mistral-small-latest")]
     pub model: String,
 }
 
-/// Enhanced dataset with LLM score and additional metadata
-#[derive(Debug, Deserialize, Serialize)]
-struct EnhancedDataset {
-    doi: String,
-    score: f64,
-    title: String,
-    description: String,
-    publication_date: String,
-    keywords: Option<Vec<String>>,
-    creators: Option<Vec<String>>,
-    zenodo_url: String,
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct SearchResponse {
+    pub datasets: Vec<Dataset>,
+    pub summary: String,
 }
 
 /// LLM response format
-#[derive(Debug, Deserialize, Serialize)]
-struct LLMResponse {
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+struct LLMStructuredOutput {
     summary: String,
     datasets: Vec<LLMDataset>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 struct LLMDataset {
     doi: String,
     score: f64,
@@ -73,11 +66,16 @@ struct LLMDataset {
 #[utoipa::path(
     post,
     path = "/search",
-    request_body(content = SearchResponse, description = "List of messages in the chat"),
+    request_body(content = SearchInput, description = "List of messages in the chat"),
+    responses(
+        (status = 200, description = "Search results", body = SearchResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
 )]
 pub async fn search_handler(
     headers: HeaderMap,
-    Json(mut resp): Json<SearchResponse>,
+    Json(mut resp): Json<SearchInput>,
 ) -> impl IntoResponse {
     // Validate API key only if SEARCH_API_KEY is set
     if let Ok(secret_key) = std::env::var("SEARCH_API_KEY") {
@@ -92,7 +90,7 @@ pub async fn search_handler(
     let api_key = match std::env::var("MISTRAL_API_KEY") {
         Ok(key) => key,
         Err(_) => {
-            // eprintln!("MISTRAL_API_KEY environment variable not set");
+            // tracing::error!("MISTRAL_API_KEY environment variable not set");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": "MISTRAL_API_KEY environment variable not set"})),
@@ -218,44 +216,56 @@ pub async fn search_handler(
         .collect::<Vec<_>>()
         .join(" ");
 
-    // Parse the structured JSON response from MCP search data tool and format it for the LLM
-    let formatted_context = match serde_json::from_str::<SearchResult>(&tool_result_text) {
-        Ok(search_result) => {
-            if search_result.total_found == 0 {
-                "No datasets found for your query.".to_string()
-            } else {
-                let mut formatted = format!(
-                    "Found {} datasets relevant to the query '{}':\n\n",
-                    search_result.total_found, search_result.query
-                );
-                for (i, dataset) in search_result.datasets.iter().enumerate() {
-                    formatted.push_str(&format!("{}. **{}**\n", i + 1, dataset.title));
-                    if let Some(doi) = &dataset.doi {
-                        formatted.push_str(&format!("   DOI: https://doi.org/{}\n", doi));
-                    }
-                    formatted.push_str(&format!("   Zenodo: {}\n", dataset.zenodo_url));
-                    formatted.push_str(&format!("   Published: {}\n", dataset.publication_date));
-                    if let Some(creators) = &dataset.creators {
-                        if !creators.is_empty() {
-                            formatted.push_str(&format!("   Authors: {}\n", creators.join(", ")));
-                        }
-                    }
-                    if let Some(keywords) = &dataset.keywords {
-                        if !keywords.is_empty() {
-                            formatted.push_str(&format!("   Keywords: {}\n", keywords.join(", ")));
-                        }
-                    }
-                    formatted.push_str(&format!("   Description: {}\n\n", dataset.description));
-                }
-                formatted
-            }
-        }
+    // Parse the structured JSON response from MCP search data tool
+    let mut search_result = match serde_json::from_str::<SearchResult>(&tool_result_text) {
+        Ok(result) => result,
         Err(e) => {
-            eprintln!("Failed to parse search result JSON: {}", e);
-            // Fallback to raw text if JSON parsing fails
-            tool_result_text.clone()
+            tracing::error!("Failed to parse search result JSON: {}", e);
+            // Return early with no datasets found message
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "summary": "No datasets found for your query.",
+                    "datasets": []
+                })),
+            );
         }
     };
+    // Check if no datasets were found and return early
+    if search_result.total_found == 0 || search_result.datasets.is_empty() {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "summary": "No datasets found for your query.",
+                "datasets": []
+            })),
+        );
+    }
+
+    // Format the context for the LLM
+    let mut formatted_context = format!(
+        "Found {} datasets relevant to the query '{}':\n\n",
+        search_result.total_found, search_result.query
+    );
+    for (i, dataset) in search_result.datasets.iter().enumerate() {
+        formatted_context.push_str(&format!("{}. **{}**\n", i + 1, dataset.title));
+        if let Some(doi) = &dataset.doi {
+            formatted_context.push_str(&format!("   DOI: https://doi.org/{}\n", doi));
+        }
+        formatted_context.push_str(&format!("   Zenodo: {}\n", dataset.zenodo_url));
+        formatted_context.push_str(&format!("   Published: {}\n", dataset.publication_date));
+        if let Some(creators) = &dataset.creators {
+            if !creators.is_empty() {
+                formatted_context.push_str(&format!("   Authors: {}\n", creators.join(", ")));
+            }
+        }
+        if let Some(keywords) = &dataset.keywords {
+            if !keywords.is_empty() {
+                formatted_context.push_str(&format!("   Keywords: {}\n", keywords.join(", ")));
+            }
+        }
+        formatted_context.push_str(&format!("   Description: {}\n\n", dataset.description));
+    }
 
     // Convert messages to LLM ChatMessage format, replacing last message content with formatted context
     let chat_messages: Vec<ChatMessage> = resp
@@ -284,57 +294,43 @@ pub async fn search_handler(
         Ok(response) => {
             // Parse the JSON response from the LLM (structured output)
             let response_text = response.text().unwrap_or_default();
-            match serde_json::from_str::<LLMResponse>(&response_text) {
+            match serde_json::from_str::<LLMStructuredOutput>(&response_text) {
                 Ok(llm_response) => {
-                    // Parse the original search results to get full dataset metadata
-                    let search_result = serde_json::from_str::<SearchResult>(&tool_result_text)
-                        .unwrap_or_else(|_| SearchResult {
-                            total_found: 0,
-                            query: String::new(),
-                            datasets: vec![],
-                        });
-
-                    // Create a lookup map for full dataset info by DOI
-                    let dataset_lookup: std::collections::HashMap<String, &DatasetSummary> =
-                        search_result
-                            .datasets
-                            .iter()
-                            .filter_map(|ds| {
-                                ds.doi
-                                    .as_ref()
-                                    .map(|doi| (format!("https://doi.org/{}", doi), ds))
-                            })
-                            .collect();
-
-                    // Enrich LLM datasets with full metadata
-                    let enhanced_datasets: Vec<EnhancedDataset> = llm_response
+                    // Create a lookup map for LLM scores by DOI
+                    let score_lookup: std::collections::HashMap<String, f64> = llm_response
                         .datasets
                         .into_iter()
-                        .filter_map(|llm_dataset| {
-                            dataset_lookup.get(&llm_dataset.doi).map(|full_dataset| {
-                                EnhancedDataset {
-                                    doi: llm_dataset.doi,
-                                    score: llm_dataset.score,
-                                    title: full_dataset.title.clone(),
-                                    description: full_dataset.description.clone(),
-                                    publication_date: full_dataset.publication_date.clone(),
-                                    keywords: full_dataset.keywords.clone(),
-                                    creators: full_dataset.creators.clone(),
-                                    zenodo_url: full_dataset.zenodo_url.clone(),
-                                }
-                            })
-                        })
+                        .map(|llm_dataset| (llm_dataset.doi, llm_dataset.score))
                         .collect();
 
-                    let enhanced_response = serde_json::json!({
-                        "summary": llm_response.summary,
-                        "datasets": enhanced_datasets
+                    // Add scores to all datasets from search results
+                    for dataset in &mut search_result.datasets {
+                        if let Some(doi) = &dataset.doi {
+                            let doi_url = format!("https://doi.org/{doi}");
+                            dataset.score =
+                                Some(score_lookup.get(&doi_url).copied().unwrap_or(0.0));
+                        } else {
+                            dataset.score = Some(0.0);
+                        }
+                    }
+
+                    // Sort datasets by score in descending order (highest score first)
+                    search_result.datasets.sort_by(|a, b| {
+                        let score_a = a.score.unwrap_or(0.0);
+                        let score_b = b.score.unwrap_or(0.0);
+                        score_b
+                            .partial_cmp(&score_a)
+                            .unwrap_or(std::cmp::Ordering::Equal)
                     });
 
-                    return (StatusCode::OK, Json(enhanced_response));
+                    let resp = SearchResponse {
+                        datasets: search_result.datasets,
+                        summary: llm_response.summary,
+                    };
+                    return (StatusCode::OK, Json(serde_json::json!(resp)));
                 }
                 Err(e) => {
-                    eprintln!("Failed to parse LLM response as JSON: {}", e);
+                    tracing::error!("Failed to parse LLM response as JSON: {}", e);
                     // Fallback: add to messages and return the original response format
                     resp.messages.push(Message {
                         role: "assistant".into(),
@@ -344,7 +340,7 @@ pub async fn search_handler(
             }
         }
         Err(e) => {
-            eprintln!("Chat error: {e}");
+            tracing::error!("Chat error: {e}");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": format!("Chat error: {}", e)})),
@@ -405,7 +401,7 @@ pub async fn search_handler(
     //             });
     //         }
     //     },
-    //     Err(e) => eprintln!("Chat error: {}", e),
+    //     Err(e) => tracing::error!("Chat error: {}", e),
     // }
     (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
 }

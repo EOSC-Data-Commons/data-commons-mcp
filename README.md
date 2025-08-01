@@ -4,7 +4,7 @@
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with a HTTP POST endpoint to access data from various open access data publishers, developed for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/).
 
-It uses a search API and LLM to find relevant datasets for a user question.
+It uses a search API and a LLM to find relevant datasets for a user question.
 
 ## 🧩 Endpoints
 

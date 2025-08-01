@@ -8,6 +8,7 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use utoipa::ToSchema;
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct UserQuestion {
@@ -21,19 +22,29 @@ pub struct UserQuestion {
 pub struct SearchResult {
     pub total_found: u64,
     pub query: String,
-    pub datasets: Vec<DatasetSummary>,
+    pub datasets: Vec<Dataset>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DatasetSummary {
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct Dataset {
+    #[schema(example = "5173026")]
     pub id: u64,
+    #[schema(example = "Dataset Title")]
     pub title: String,
+    #[schema(example = "Dataset Description")]
     pub description: String,
+    #[schema(example = "10.48550/arXiv.2410.06062")]
     pub doi: Option<String>,
+    #[schema(example = "2025-10-08")]
     pub publication_date: String,
+    // #[schema(example = "['Information Retrieval, Data Science']")]
     pub keywords: Option<Vec<String>>,
+    // #[schema(example = "['Emonet, Vincent']")]
     pub creators: Option<Vec<String>>,
+    #[schema(example = "https://zenodo.org/record/5173026")]
     pub zenodo_url: String,
+    #[schema(example = "0.5")]
+    pub score: Option<f64>,
 }
 
 /// Represents a response from Zenodo API
@@ -147,7 +158,7 @@ impl DataCommonsTools {
                 }
                 match response.json::<ZenodoResponse>().await {
                     Ok(zenodo_data) => {
-                        let datasets: Vec<DatasetSummary> = zenodo_data
+                        let datasets: Vec<Dataset> = zenodo_data
                             .hits
                             .hits
                             .iter()
@@ -188,7 +199,7 @@ impl DataCommonsTools {
                                     .map(|creators| {
                                         creators.iter().filter_map(|c| c.name.clone()).collect()
                                     });
-                                DatasetSummary {
+                                Dataset {
                                     id: record.id,
                                     title,
                                     description,
@@ -197,6 +208,7 @@ impl DataCommonsTools {
                                     keywords,
                                     creators,
                                     zenodo_url: format!("https://zenodo.org/record/{}", record.id),
+                                    score: None,
                                 }
                             })
                             .collect();
