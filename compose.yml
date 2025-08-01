@@ -6,4 +6,4 @@ services:
     environment:
       - RUST_LOG=info
     env_file:
-      - .env
+      - keys.env
