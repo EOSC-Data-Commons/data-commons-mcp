@@ -71,7 +71,7 @@ impl ApiChatMessage {
         match self.role.as_str() {
             "user" => ChatMessage::user().content(&self.content).build(),
             "assistant" => ChatMessage::assistant().content(&self.content).build(),
-            _ => ChatMessage::user().content(&self.content).build(), // Default to user if unknown role
+            _ => ChatMessage::assistant().content(&self.content).build(), // Default to assistant
         }
     }
 
@@ -87,11 +87,6 @@ impl ApiChatMessage {
     pub fn assistant(content: impl Into<String>) -> Self {
         Self::new("assistant", content)
     }
-
-    // /// Create a user message
-    // pub fn user(content: impl Into<String>) -> Self {
-    //     Self::new("user", content)
-    // }
 }
 
 /// OpenAI-compatible streaming response chunk
@@ -295,13 +290,7 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::
         let mut chat_messages: Vec<ChatMessage> = resp
             .messages
             .iter()
-            .map(|msg| {
-                match msg.role.as_str() {
-                    "user" => ChatMessage::user().content(&msg.content).build(),
-                    "assistant" => ChatMessage::assistant().content(&msg.content).build(),
-                    _ => ChatMessage::assistant().content(&msg.content).build(), // Default to assistant if unknown role
-                }
-            })
+            .map(|msg| msg.to_chat_message())
             .collect();
 
         // Configure Mistral LLM client with dynamic tools from MCP
@@ -811,12 +800,9 @@ async fn regular_search_handler(headers: HeaderMap, mut resp: SearchInput) -> im
             } else {
                 msg.content.clone()
             };
-            // TODO: Use the to_chat_message method but with modified content
-            match msg.role.as_str() {
-                "user" => ChatMessage::user().content(&content).build(),
-                "assistant" => ChatMessage::assistant().content(&content).build(),
-                _ => ChatMessage::user().content(&content).build(), // Default to user if unknown role
-            }
+            // Use the to_chat_message method but with modified content
+            let modified_msg = ApiChatMessage::new(msg.role.clone(), content);
+            modified_msg.to_chat_message()
         })
         .collect();
 
