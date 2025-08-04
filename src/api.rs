@@ -6,7 +6,6 @@ use axum::{
 };
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
 use std::time::{SystemTime, UNIX_EPOCH};
 use utoipa::ToSchema;
 
@@ -22,20 +21,38 @@ use rmcp::{
     transport::StreamableHttpClientTransport,
 };
 
+use crate::error::AppResult;
 use crate::mcp::{SearchHit, SearchResult};
 
 pub const ADDRESS: &str = "0.0.0.0:8000";
-const SYSTEM_PROMPT: &str =
-    "You are an assistant that help users find datasets and tools for scientific research.";
 const SYSTEM_PROMPT_TOOLS: &str = "You are an assistant that help users find datasets and tools for scientific research. Define if you need to use one of the tool provided to get more context to answer the user request.";
-const SYSTEM_PROMPT_RESOLUTION: &str = "Given the user question and datasets retrieved from the search API, summarize the findings in 1 sentence, extract which datasets might be the most interesting to answer the user question, and give them a relevance score between 0 and 1";
-// const DEFAULT_MODEL: &str = "mistral-small-latest";
-// const DEFAULT_MODEL: &str = "mistral-medium-latest";
+const SYSTEM_PROMPT_RESOLUTION: &str = "You are an assistant that help users find datasets and tools for scientific research. Given the user question and datasets retrieved from the search API, summarize the findings in 1 sentence, extract which datasets might be the most interesting to answer the user question, and give them a relevance score between 0 and 1";
 
-const LLM_BACKEND: LLMBackend = LLMBackend::OpenAI;
-const LLM_API_KEY: &str = "OPENAI_API_KEY";
-// const LLM_BACKEND: LLMBackend = LLMBackend::Mistral;
-// const LLM_API_KEY: &str = "MISTRAL_API_KEY";
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct SearchInput {
+    pub messages: Vec<ApiChatMessage>,
+    // #[schema(example = "mistral-small-latest")]
+    #[schema(example = "gpt-4.1-nano")]
+    pub model: String,
+    #[serde(default)]
+    pub stream: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct SearchResponse {
+    pub hits: Vec<SearchHit>,
+    pub summary: String,
+    // pub usage: Option<UsageInfo>,
+}
+
+// /// Token usage and cost information for LLM calls
+// #[derive(Debug, Deserialize, Serialize, ToSchema, Clone)]
+// pub struct UsageInfo {
+//     pub prompt_tokens: u32,
+//     pub completion_tokens: u32,
+//     pub total_tokens: u32,
+//     pub total_cost_usd: f64,
+// }
 
 /// Wrapper around llm::ChatMessage that implements ToSchema for API documentation
 #[derive(Debug, Deserialize, Serialize, ToSchema, Clone)]
@@ -66,31 +83,15 @@ impl ApiChatMessage {
         }
     }
 
-    /// Create a user message
-    pub fn user(content: impl Into<String>) -> Self {
-        Self::new("user", content)
-    }
-
     /// Create an assistant message
     pub fn assistant(content: impl Into<String>) -> Self {
         Self::new("assistant", content)
     }
-}
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct SearchInput {
-    pub messages: Vec<ApiChatMessage>,
-    // #[schema(example = "mistral-small-latest")]
-    #[schema(example = "gpt-4.1-nano")]
-    pub model: String,
-    #[serde(default)]
-    pub stream: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct SearchResponse {
-    pub hits: Vec<SearchHit>,
-    pub summary: String,
+    // /// Create a user message
+    // pub fn user(content: impl Into<String>) -> Self {
+    //     Self::new("user", content)
+    // }
 }
 
 /// OpenAI-compatible streaming response chunk
@@ -117,13 +118,6 @@ struct StreamDelta {
     function_call: Option<serde_json::Value>,
 }
 
-/// Response for initial Zenodo data
-#[derive(Debug, Serialize)]
-struct ZenodoDataChunk {
-    datasets: Vec<SearchHit>,
-    step: String,
-}
-
 /// LLM response format
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 struct LLMStructuredOutput {
@@ -135,50 +129,6 @@ struct LLMStructuredOutput {
 struct LLMDataset {
     doi: String,
     score: f64,
-}
-
-/// Search data relevant to a user question in a conversation
-#[utoipa::path(
-    post,
-    path = "/search",
-    request_body(content = SearchInput, description = "List of messages in the chat"),
-    responses(
-        (status = 200, description = "Search results", body = SearchResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 500, description = "Internal server error")
-    ),
-)]
-pub async fn search_handler(headers: HeaderMap, Json(resp): Json<SearchInput>) -> Response {
-    if resp.stream {
-        streaming_search_handler(headers, resp)
-            .await
-            .into_response()
-    } else {
-        regular_search_handler(headers, resp).await.into_response()
-    }
-}
-
-/// Streaming search handler for SSE responses
-async fn streaming_search_handler(headers: HeaderMap, resp: SearchInput) -> impl IntoResponse {
-    // Validate API key only if SEARCH_API_KEY is set
-    if let Ok(secret_key) = std::env::var("SEARCH_API_KEY") {
-        let auth_header = headers.get("authorization");
-        if auth_header.is_none() || auth_header.unwrap().to_str().unwrap_or("") != secret_key {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "unauthorized"})),
-            )
-                .into_response();
-        }
-    }
-    let stream = create_search_stream(resp);
-    Sse::new(stream)
-        // .keep_alive(
-        //     sse::KeepAlive::new()
-        //         .interval(std::time::Duration::from_secs(10)),
-        //         // .text("keep-alive-text"),
-        // )
-        .into_response()
 }
 
 // Define a simple JSON schema for structured output
@@ -219,15 +169,76 @@ const SEARCH_OUTPUT_SCHEMA: &str = r#"
     }
 "#;
 
+/// Determines the LLM backend and API key based on available environment variables
+/// OpenAI takes priority if both are available
+fn get_llm_config() -> Result<(LLMBackend, String), String> {
+    if std::env::var("OPENAI_API_KEY").is_ok() {
+        match std::env::var("OPENAI_API_KEY") {
+            Ok(key) => Ok((LLMBackend::OpenAI, key)),
+            Err(_) => Err("OPENAI_API_KEY environment variable not set".to_string()),
+        }
+    } else if std::env::var("MISTRAL_API_KEY").is_ok() {
+        match std::env::var("MISTRAL_API_KEY") {
+            Ok(key) => Ok((LLMBackend::Mistral, key)),
+            Err(_) => Err("MISTRAL_API_KEY environment variable not set".to_string()),
+        }
+    } else {
+        Err("No LLM API key found. Please set either OPENAI_API_KEY or MISTRAL_API_KEY environment variable".to_string())
+    }
+}
+
+/// Search data relevant to a user question in a conversation
+#[utoipa::path(
+    post,
+    path = "/search",
+    request_body(content = SearchInput, description = "List of messages in the chat"),
+    responses(
+        (status = 200, description = "Search results", body = SearchResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+)]
+pub async fn search_handler(headers: HeaderMap, Json(resp): Json<SearchInput>) -> Response {
+    if resp.stream {
+        streaming_search_handler(headers, resp)
+            .await
+            .into_response()
+    } else {
+        regular_search_handler(headers, resp).await.into_response()
+    }
+}
+
+/// Streaming search handler for SSE responses
+async fn streaming_search_handler(headers: HeaderMap, resp: SearchInput) -> impl IntoResponse {
+    // Validate API key only if SEARCH_API_KEY is set
+    if let Ok(secret_key) = std::env::var("SEARCH_API_KEY") {
+        let auth_header = headers.get("authorization");
+        let auth_value = auth_header.and_then(|h| h.to_str().ok()).unwrap_or("");
+        if auth_value != secret_key {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "unauthorized"})),
+            )
+                .into_response();
+        }
+    }
+    let stream = create_search_stream(resp);
+    Sse::new(stream)
+        // .keep_alive(
+        //     sse::KeepAlive::new()
+        //         .interval(std::time::Duration::from_secs(10)),
+        //         // .text("keep-alive-text"),
+        // )
+        .into_response()
+}
+
 /// Helper function to create error SSE events
-fn send_error_event(error_message: &str) -> sse::Event {
-    sse::Event::default().event("error")
-        .data(
-            serde_json::to_string(&serde_json::json!({
-                "error": error_message.to_string(),
-            }))
-            .unwrap(),
-        )
+fn send_error_event(error_message: &str) -> AppResult<sse::Event> {
+    Ok(sse::Event::default()
+        .event("error")
+        .data(serde_json::to_string(&serde_json::json!({
+            "error": error_message.to_string(),
+        }))?))
     // sse::Event::default().data(
     //     serde_json::to_string(&StreamChunk {
     //         id: msg_id.to_string(),
@@ -243,16 +254,14 @@ fn send_error_event(error_message: &str) -> sse::Event {
     //             },
     //             finish_reason: Some(finish_reason.to_string()),
     //         }],
-    //     })
-    //     .unwrap(),
+    //     })?,
     // )
 }
 
-fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Event, Infallible>> {
+fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::Event>> {
     async_stream::stream! {
         let created = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .duration_since(UNIX_EPOCH)?
             .as_secs();
         let msg_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
 
@@ -262,7 +271,7 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
             protocol_version: Default::default(),
             capabilities: ClientCapabilities::default(),
             client_info: Implementation {
-                name: "MCP HTTP client".to_string(),
+                name: "MCP streamable HTTP client".to_string(),
                 version: "0.0.1".to_string(),
             },
         };
@@ -270,14 +279,14 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
             Ok(client) => client,
             Err(e) => {
                 tracing::error!("client error: {:?}", e);
-                yield Ok(send_error_event("Error connecting to search service"));
+                yield Ok(send_error_event("Error connecting to search service")?);
                 return;
             }
         };
-        let api_key = match std::env::var(LLM_API_KEY) {
-            Ok(key) => key,
-            Err(_) => {
-                tracing::error!("{LLM_API_KEY} environment variable not set");
+        let (llm_backend, llm_api_key) = match get_llm_config() {
+            Ok((backend, key)) => (backend, key),
+            Err(e) => {
+                tracing::error!("{}", e);
                 return;
             }
         };
@@ -290,15 +299,15 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
                 match msg.role.as_str() {
                     "user" => ChatMessage::user().content(&msg.content).build(),
                     "assistant" => ChatMessage::assistant().content(&msg.content).build(),
-                    _ => ChatMessage::user().content(&msg.content).build(), // Default to user if unknown role
+                    _ => ChatMessage::assistant().content(&msg.content).build(), // Default to assistant if unknown role
                 }
             })
             .collect();
 
         // Configure Mistral LLM client with dynamic tools from MCP
         let mut llm_builder = LLMBuilder::new()
-            .backend(LLM_BACKEND)
-            .api_key(&api_key)
+            .backend(llm_backend.clone())
+            .api_key(&llm_api_key)
             .model(&resp.model)
             .max_tokens(1024)
             .temperature(0.1)
@@ -306,8 +315,8 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
             .system(SYSTEM_PROMPT_TOOLS);
 
         // Convert MCP tools to LLM functions and add them to the llm builder
-        let tools = client.list_tools(Default::default()).await.unwrap();
-        tracing::debug!("Available tools: {tools:#?}");
+        let tools = client.list_tools(Default::default()).await?;
+        // tracing::debug!("Available MCP tools: {tools:#?}");
         for tool in &tools.tools {
             let schema_value = serde_json::Value::Object(tool.input_schema.as_ref().clone());
             let function = FunctionBuilder::new(tool.name.to_string())
@@ -322,7 +331,7 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
         // https://github.com/graniet/llm/blob/main/examples/google_tool_calling_example.rs
         let (response_text, tool_calls) = match llm.chat_with_tools(&chat_messages, llm.tools()).await {
             Ok(response) => {
-                tracing::debug!("LLM response: {response:#?}");
+                tracing::debug!("LLM tool call response: {response:#?}");
                 (response.text().unwrap_or_default().to_string(), response.tool_calls())
             },
             Err(e) => {
@@ -332,7 +341,7 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
         };
         yield Ok(sse::Event::default()
             .event("tool_call_requested")
-            .data(serde_json::to_string(&tool_calls).unwrap()));
+            .data(serde_json::to_string(&tool_calls)?));
 
         // Get last msg from the user, and init search results
         let last_message_content = resp
@@ -364,7 +373,7 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
                     Ok(results) => results,
                     Err(e) => {
                         tracing::error!("MCP tool call failed: {}", e);
-                        yield Ok(send_error_event("Error searching for datasets"));
+                        yield Ok(send_error_event("Error searching for datasets")?);
                         return;
                     }
                 };
@@ -385,7 +394,7 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
                     Ok(result) => result,
                     Err(e) => {
                         tracing::error!("Failed to parse search result JSON: {e}");
-                        yield Ok(send_error_event("Issue querying the search service."));
+                        yield Ok(send_error_event("Issue querying the search service.")?);
                         return;
                     }
                 };
@@ -396,7 +405,7 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
                 // Stream the tool results (without scores or summary)
                 yield Ok(sse::Event::default()
                     .event("tool_call_result")
-                    .data(serde_json::to_string(&search_results).unwrap()));
+                    .data(serde_json::to_string(&search_results)?));
             } // Tool call end
 
             // Format the context for the LLM based on tool call results
@@ -427,7 +436,7 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
         } else {
             // Handle case where no tool calls were made (regular chat response)
             tracing::debug!("Direct response! {}", response_text);
-            yield Ok(sse::Event::default().event("error")
+            yield Ok(sse::Event::default().event("message")
                 .data(
                     serde_json::to_string(&serde_json::json!({
                         "id": msg_id.to_string(),
@@ -436,14 +445,14 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
                         "model": resp.model.clone(),
                         "choices": [{
                             "index": 0,
-                            // "message": { when not streaming
+                            // "message": { // when not streaming
                             "delta": {
                                 "role": "assistant",
                                 "content": response_text.to_string()
                             },
                             "finish_reason": "stop"
                         }]
-                    })).unwrap()
+                    }))?
                 ));
                 // Similar to llm crate message format:
                 // .data(
@@ -453,23 +462,22 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
                 //             "content": response_text.to_string(),
                 //             "tool_calls": null,
                 //         }},
-                //     }))
-                //     .unwrap(),
+                //     }))?,
                 // ));
             return;
         }
 
         // Check if no datasets were found and return early
         if search_results.total_found == 0 || search_results.hits.is_empty() {
-            yield Ok(send_error_event("Nothing found for your query."));
+            yield Ok(send_error_event("Nothing found for your query.")?);
             return;
         }
 
         // Create LLM client with structured output schema to answer user question
-        let schema: StructuredOutputFormat = serde_json::from_str(SEARCH_OUTPUT_SCHEMA).unwrap();
+        let schema: StructuredOutputFormat = serde_json::from_str(SEARCH_OUTPUT_SCHEMA)?;
         let llm_resolution = LLMBuilder::new()
-            .backend(LLM_BACKEND)
-            .api_key(&api_key)
+            .backend(llm_backend)
+            .api_key(&llm_api_key)
             .model(&resp.model)
             .max_tokens(512)
             .temperature(0.1)
@@ -528,7 +536,7 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
                 // Stream response
                 yield Ok(sse::Event::default()
                     .event("search_response")
-                    .data(serde_json::to_string(&res).unwrap()));
+                    .data(serde_json::to_string(&res)?));
                 // Final stop chunk
                 yield Ok(sse::Event::default()
                     .data(serde_json::to_string(&StreamChunk {
@@ -545,7 +553,7 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = Result<sse::Eve
                             },
                             finish_reason: Some("stop".to_string()),
                         }],
-                    }).unwrap()));
+                    })?));
                 return;
             }
             Err(e) => {
@@ -571,14 +579,14 @@ async fn regular_search_handler(headers: HeaderMap, mut resp: SearchInput) -> im
     // let mut search_response_data: Option<String> = None;
     // while let Some(event_result) = stream.next().await {
     //     let event = event_result.unwrap(); // Stream always returns Ok
-    //     tracing::info!("Received event: {:?}", event);
+    //     tracing::debug!("Received event: {:?}", event);
     //     // We need to manually reconstruct the event to check its content
     //     // The event is built with .event("search_response") and .data(json_string)
     //     // Since we can't directly inspect the event type, we'll use debug output
     //     let event_debug = format!("{event:?}");
     //     // Check if this looks like a search_response event
     //     if event_debug.contains("search_response") {
-    //         tracing::info!("Found search_response event: {}", event_debug);
+    //         tracing::debug!("Found search_response event: {}", event_debug);
     //         // Extract data from debug string - look for the JSON data field
     //         if let Some(data_start) = event_debug.find("data: Some(\"") {
     //             let data_content = &event_debug[data_start + 12..];
@@ -623,14 +631,12 @@ async fn regular_search_handler(headers: HeaderMap, mut resp: SearchInput) -> im
             );
         }
     }
-    let api_key = match std::env::var(LLM_API_KEY) {
-        Ok(key) => key,
-        Err(_) => {
+    let (llm_backend, api_key) = match get_llm_config() {
+        Ok((backend, key)) => (backend, key),
+        Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(
-                    serde_json::json!({"error": format!("{LLM_API_KEY} environment variable not set")}),
-                ),
+                Json(serde_json::json!({"error": e})),
             );
         }
     };
@@ -642,7 +648,7 @@ async fn regular_search_handler(headers: HeaderMap, mut resp: SearchInput) -> im
         protocol_version: Default::default(),
         capabilities: ClientCapabilities::default(),
         client_info: Implementation {
-            name: "test HTTP client".to_string(),
+            name: "MCP streamable HTTP client".to_string(),
             version: "0.0.1".to_string(),
         },
     };
@@ -655,7 +661,7 @@ async fn regular_search_handler(headers: HeaderMap, mut resp: SearchInput) -> im
         .unwrap();
     // Check server info
     // let server_info = client.peer_info();
-    // tracing::info!("Connected to server: {server_info:#?}");
+    // tracing::debug!("Connected to server: {server_info:#?}");
 
     // Convert input messages to llm ChatMessage format, replacing last message content with tool result
     // let mut search_resp = SearchResponse {
@@ -704,18 +710,18 @@ async fn regular_search_handler(headers: HeaderMap, mut resp: SearchInput) -> im
 
     // Configure Mistral LLM client with dynamic tools from MCP
     let llm_builder = LLMBuilder::new()
-        .backend(LLM_BACKEND)
+        .backend(llm_backend)
         .api_key(api_key)
         .model(&resp.model)
         .max_tokens(512)
         .temperature(0.1)
         .stream(false)
-        .system(SYSTEM_PROMPT)
+        .system(SYSTEM_PROMPT_RESOLUTION)
         .schema(schema);
 
     let llm = llm_builder.build().expect("Failed to build LLM client");
 
-    tracing::info!("Calling Zenodo API");
+    tracing::debug!("Calling Zenodo API");
     // Call a MCP tool
     let last_message_content = resp
         .messages
@@ -731,7 +737,7 @@ async fn regular_search_handler(headers: HeaderMap, mut resp: SearchInput) -> im
         })
         .await
         .expect("MCP tool call failed");
-    tracing::info!("Done calling Zenodo API");
+    tracing::debug!("Done calling Zenodo API");
     // Extract and parse structured JSON content from the tool result
     let tool_result_text = tool_results
         .content
@@ -805,7 +811,7 @@ async fn regular_search_handler(headers: HeaderMap, mut resp: SearchInput) -> im
             } else {
                 msg.content.clone()
             };
-            // Use the to_chat_message method but with modified content
+            // TODO: Use the to_chat_message method but with modified content
             match msg.role.as_str() {
                 "user" => ChatMessage::user().content(&content).build(),
                 "assistant" => ChatMessage::assistant().content(&content).build(),
@@ -816,10 +822,11 @@ async fn regular_search_handler(headers: HeaderMap, mut resp: SearchInput) -> im
 
     // TODO: call with structured output to retrieve the list of most relevant according to the LLM
 
-    tracing::info!("Calling the LLM");
+    tracing::debug!("Calling the LLM");
     // Send chat request using additional infos retrieved by the tool call
     match llm.chat(&chat_messages).await {
         Ok(response) => {
+            tracing::debug!("LLM structured response: {response:#?}");
             // Parse the JSON response from the LLM (structured output)
             let response_text = response.text().unwrap_or_default();
             match serde_json::from_str::<LLMStructuredOutput>(&response_text) {
@@ -872,7 +879,7 @@ async fn regular_search_handler(headers: HeaderMap, mut resp: SearchInput) -> im
             );
         }
     }
-    tracing::info!("Done calling the LLM");
+    tracing::debug!("Done calling the LLM");
 
     (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
 }

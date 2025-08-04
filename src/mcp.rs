@@ -116,9 +116,9 @@ impl DataCommonsTools {
         RawResource::new(uri, name.to_string()).no_annotation()
     }
 
-    // TODO: search_tool or search_service
-    // #[tool(description = "Search for tools relevant to the user question")]
-    // async fn search_tool(
+    // TODO: search_citations
+    // #[tool(description = "Search citations related to datasets or tools relevant to the user question")]
+    // async fn search_citations(
 
     #[tool(description = "Search for tools relevant to the user question")]
     async fn search_tool(
@@ -128,7 +128,6 @@ impl DataCommonsTools {
         // TODO: implement
         let search_result = SearchResult {
             total_found: 8292030,
-            // query: question.clone(),
             hits: vec![SearchHit {
                 id: 427542,
                 title: "JupyterLab".to_string(),

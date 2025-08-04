@@ -13,8 +13,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup update
-      # - run: cargo fmt -- --check
-      # - run: cargo clippy --all --all-targets --all-features
+      - run: cargo install cargo-deny
+      - run: cargo fmt -- --check
+      - run: cargo clippy --all --all-targets --all-features
+      - run: cargo deny check
       - run: cargo build --release
 
   docker:
@@ -22,7 +24,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Build Docker image
         run: docker build -t data-commons-mcp .
 

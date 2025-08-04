@@ -2,26 +2,35 @@
 
 [![Tests](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/test.yml)
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server with a HTTP POST endpoint to access data from various open access data publishers, developed for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/).
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server exposing an HTTP POST endpoint to access data from various open-access data publishers, developed for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/).
 
-It uses a search API and a LLM to find relevant datasets for a user question.
+It uses a search API, and a Large Language Model (LLM) to help users find the datasets and tools they need.
 
 ## 🧩 Endpoints
 
 The HTTP API comprises 2 main endpoints:
 
-- `/mcp`: **MCP server** to search for relevant data to answer a user question using the EOSC Data Commons search API
-  - Use [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) with Streamable HTTP transport
-
-- `/search`: regular **HTTP POST** JSON that enables querying the MCP server with a LLM provider
-  - Use [`axum`](https://github.com/tokio-rs/axum), [`utoipa`](https://github.com/juhaku/utoipa) for OpenAPI spec generation, [`llm`](https://github.com/graniet/llm) to interact with LLM providers (e.g. [Mistral](https://admin.mistral.ai/organization/api-keys))
+- `/mcp`: **MCP server** that searches for relevant data to answer a user question using the EOSC Data Commons search API
+  - Uses [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) with Streamable HTTP transport
+  - Available tools:
+    - [x] Search datasets
+    - [ ] Search tools
+    - [ ] Search citations related to datasets or tools
+  
+- `/search`: simple **HTTP POST** endpoint (JSON) for querying the MCP server via an LLM provider
+  - Uses [`axum`](https://github.com/tokio-rs/axum), [`utoipa`](https://github.com/juhaku/utoipa) for OpenAPI spec generation, [`llm`](https://github.com/graniet/llm) to interact with LLM providers (e.g. [Mistral](https://admin.mistral.ai/organization/api-keys), OpenAI)
+  - Returns a streaming response: tool call requested, then tool call results, and final search results.
 
 ## 🛠️ Development
 
-> Requirements: 
+> [!IMPORTANT]
+>
+> Requirements:
 >
 > - [Rust](https://www.rust-lang.org/tools/install)
-> - [API key for Mistral.ai](https://console.mistral.ai/api-keys) LLM, you can use the free tier, you just need to login
+> - API key for a LLM provider: [Mistral.ai](https://console.mistral.ai/api-keys) or OpenAI, you can use the free tier, you just need to login
+>
+> Recommend VSCode extension: [`rust-analyzer`](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
 
 ### 📥 Install dev dependencies
 
@@ -30,11 +39,12 @@ rustup update
 cargo install cargo-deny cargo-watch
 ```
 
-Create a `.cargo/config.toml` file with your [Mistral API key](https://admin.mistral.ai/organization/api-keys):
+Create a `.cargo/config.toml` file with your [Mistral API key](https://admin.mistral.ai/organization/api-keys) or OpenAI API key:
 
 ```toml
 [env]
 MISTRAL_API_KEY = "YOUR_API_KEY"
+OPENAI_API_KEY = "YOUR_API_KEY"
 ```
 
 ### ⚡️ Start dev server
@@ -91,6 +101,8 @@ Build binary in `target/release/`
 cargo build --release
 ```
 
+> [!NOTE]
+>
 > Start the server with:
 >
 > ```sh
@@ -106,7 +118,9 @@ MISTRAL_API_KEY=YOUR_API_KEY
 SEARCH_API_KEY=SECRET_KEY_YOU_CAN_USE_IN_FRONTEND_TO_AVOID_SPAM
 ```
 
-> `SEARCH_API_KEY` can be used to add a layer of protection against bot that might spam the LLM, if not provided no API key willl be needed to query the API.
+> [!TIP]
+>
+> `SEARCH_API_KEY` can be used to add a layer of protection against bots that might spam the LLM, if not provided no API key will be needed to query the API.
 
 Build and deploy the service:
 
@@ -128,6 +142,12 @@ Lint with `clippy`:
 cargo clippy --all
 ```
 
+Automatically apply possible fixes:
+
+```sh
+cargo fix
+```
+
 ### ⛓️ Check supply chain
 
 Check the dependency supply chain: licenses (only accept dependencies with OSI or FSF approved licenses), and vulnerabilities (CVE advisories).
@@ -136,7 +156,7 @@ Check the dependency supply chain: licenses (only accept dependencies with OSI o
 cargo deny check
 ```
 
-Update dependencies:
+Update dependencies in `Cargo.lock`:
 
 ```sh
 cargo update

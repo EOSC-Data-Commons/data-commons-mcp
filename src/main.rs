@@ -8,10 +8,12 @@ use rmcp::transport::streamable_http_server::{
     StreamableHttpService, session::local::LocalSessionManager,
 };
 
+mod error;
 mod mcp;
 use mcp::DataCommonsTools;
 mod api;
 use api::ADDRESS;
+use error::AppResult;
 // OpenAPI generation: https://github.com/juhaku/utoipa/blob/master/examples/axum-multipart/src/main.rs
 // MCP client: https://github.com/modelcontextprotocol/rust-sdk/blob/main/examples/clients/src/streamable_http.rs
 
@@ -25,17 +27,16 @@ use api::ADDRESS;
 struct ApiDoc;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> AppResult<()> {
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| {
-                    // In dev: info for all, debug for data_commons_mcp only
-                    #[cfg(debug_assertions)]
-                    return "info,data_commons_mcp=debug".to_string().into();
-                    #[cfg(not(debug_assertions))]
-                    return "info".to_string().into();
-                }),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                // In dev: info for all, debug for data_commons_mcp only
+                #[cfg(debug_assertions)]
+                return "info,data_commons_mcp=debug".to_string().into();
+                #[cfg(not(debug_assertions))]
+                return "info".to_string().into();
+            }),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
