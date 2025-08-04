@@ -21,17 +21,17 @@ pub struct UserQuestion {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchResult {
     pub total_found: u64,
-    pub query: String,
-    pub datasets: Vec<Dataset>,
+    // pub query: String,
+    pub hits: Vec<SearchHit>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]
-pub struct Dataset {
+pub struct SearchHit {
     #[schema(example = "5173026")]
     pub id: u64,
-    #[schema(example = "Dataset Title")]
+    #[schema(example = "Item Title")]
     pub title: String,
-    #[schema(example = "Dataset Description")]
+    #[schema(example = "Item Description")]
     pub description: String,
     #[schema(example = "10.48550/arXiv.2410.06062")]
     pub doi: Option<String>,
@@ -43,6 +43,8 @@ pub struct Dataset {
     pub creators: Option<Vec<String>>,
     #[schema(example = "https://zenodo.org/record/5173026")]
     pub zenodo_url: String,
+    #[schema(example = "dataset")]
+    pub resource_type: String,
     #[schema(example = "0.5")]
     pub score: Option<f64>,
 }
@@ -114,6 +116,41 @@ impl DataCommonsTools {
         RawResource::new(uri, name.to_string()).no_annotation()
     }
 
+    // TODO: search_tool or search_service
+    // #[tool(description = "Search for tools relevant to the user question")]
+    // async fn search_tool(
+
+    #[tool(description = "Search for tools relevant to the user question")]
+    async fn search_tool(
+        &self,
+        Parameters(UserQuestion { question }): Parameters<UserQuestion>,
+    ) -> Result<CallToolResult, McpError> {
+        // TODO: implement
+        let search_result = SearchResult {
+            total_found: 8292030,
+            // query: question.clone(),
+            hits: vec![SearchHit {
+                id: 427542,
+                title: "JupyterLab".to_string(),
+                description: "Notebooks".to_string(),
+                doi: Some("10.5281/zenodo.427542".to_string()),
+                publication_date: "2016-08-29".to_string(),
+                keywords: Some(vec!["Data Science".to_string()]),
+                creators: Some(vec!["Lastname, Firstname".to_string()]),
+                zenodo_url: "https://zenodo.org/record/427542".to_string(),
+                resource_type: "dataset".to_string(),
+                score: None,
+            }],
+        };
+        let json_content = serde_json::to_string_pretty(&search_result).map_err(|e| {
+            McpError::internal_error(
+                "Failed to serialize search results",
+                Some(json!({"error": e.to_string()})),
+            )
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(json_content)]))
+    }
+
     #[tool(description = "Search for data relevant to the user question")]
     async fn search_data(
         &self,
@@ -158,7 +195,7 @@ impl DataCommonsTools {
                 }
                 match response.json::<ZenodoResponse>().await {
                     Ok(zenodo_data) => {
-                        let datasets: Vec<Dataset> = zenodo_data
+                        let hits: Vec<SearchHit> = zenodo_data
                             .hits
                             .hits
                             .iter()
@@ -167,7 +204,7 @@ impl DataCommonsTools {
                                 let title = record
                                     .metadata
                                     .as_ref()
-                                    .and_then(|m| Some(&m.title))
+                                    .map(|m| &m.title)
                                     .unwrap_or(&record.title)
                                     .clone();
                                 let description = record
@@ -199,7 +236,7 @@ impl DataCommonsTools {
                                     .map(|creators| {
                                         creators.iter().filter_map(|c| c.name.clone()).collect()
                                     });
-                                Dataset {
+                                SearchHit {
                                     id: record.id,
                                     title,
                                     description,
@@ -208,14 +245,15 @@ impl DataCommonsTools {
                                     keywords,
                                     creators,
                                     zenodo_url: format!("https://zenodo.org/record/{}", record.id),
+                                    resource_type: "dataset".to_string(),
                                     score: None,
                                 }
                             })
                             .collect();
                         let search_result = SearchResult {
                             total_found: zenodo_data.hits.total,
-                            query: question.clone(),
-                            datasets,
+                            // query: question.clone(),
+                            hits,
                         };
 
                         // Return as JSON content

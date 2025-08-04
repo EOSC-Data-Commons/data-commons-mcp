@@ -27,7 +27,7 @@ The HTTP API comprises 2 main endpoints:
 
 ```sh
 rustup update
-cargo install cargo-deny
+cargo install cargo-deny cargo-watch
 ```
 
 Create a `.cargo/config.toml` file with your [Mistral API key](https://admin.mistral.ai/organization/api-keys):
@@ -43,6 +43,12 @@ Start the **MCP server** in dev at http://localhost:8000/mcp, with OpenAPI UI at
 
 ```sh
 cargo run
+```
+
+Run and reload on change to the code:
+
+```sh
+cargo watch -x run
 ```
 
 > Example `curl` request:
