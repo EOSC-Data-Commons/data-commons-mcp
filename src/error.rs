@@ -15,6 +15,10 @@ pub enum AppError {
     SystemTime(std::time::SystemTimeError),
     /// I/O errors
     Io(std::io::Error),
+    /// LLM client errors
+    Llm(String),
+    /// No data found errors
+    NoDataFound(String),
     // /// HTTP client errors (reqwest)
     // Http(reqwest::Error),
     // /// API key missing or invalid
@@ -30,6 +34,8 @@ impl fmt::Display for AppError {
             AppError::Mcp(err) => write!(f, "MCP error: {err}"),
             AppError::SystemTime(err) => write!(f, "System time error: {err}"),
             AppError::Io(err) => write!(f, "I/O error: {err}"),
+            AppError::Llm(msg) => write!(f, "LLM error: {msg}"),
+            AppError::NoDataFound(msg) => write!(f, "No data found: {msg}"),
             // AppError::Http(err) => write!(f, "HTTP error: {}", err),
             // AppError::ApiKey(msg) => write!(f, "API key error: {}", msg),
             // AppError::Search(msg) => write!(f, "Search error: {}", msg),
@@ -44,6 +50,8 @@ impl std::error::Error for AppError {
             AppError::Mcp(err) => Some(err),
             AppError::SystemTime(err) => Some(err),
             AppError::Io(err) => Some(err),
+            AppError::Llm(_) => None,
+            AppError::NoDataFound(_) => None,
             // AppError::Http(err) => Some(err),
             // _ => None,
         }
@@ -57,6 +65,8 @@ impl IntoResponse for AppError {
             AppError::Mcp(_) => (StatusCode::BAD_GATEWAY, "Search service error"),
             AppError::SystemTime(_) => (StatusCode::INTERNAL_SERVER_ERROR, "System time error"),
             AppError::Io(_) => (StatusCode::INTERNAL_SERVER_ERROR, "I/O error"),
+            AppError::Llm(_) => (StatusCode::INTERNAL_SERVER_ERROR, "LLM service error"),
+            AppError::NoDataFound(_) => (StatusCode::NOT_FOUND, "No data found"),
             // AppError::Http(_) => (StatusCode::BAD_GATEWAY, "External service error"),
             // AppError::ApiKey(_) => (StatusCode::UNAUTHORIZED, "Invalid API key"),
             // AppError::Search(_) => (StatusCode::BAD_GATEWAY, "Search service error"),

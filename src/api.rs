@@ -21,7 +21,7 @@ use rmcp::{
     transport::StreamableHttpClientTransport,
 };
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::mcp::{SearchHit, SearchResult};
 
 pub const ADDRESS: &str = "0.0.0.0:8000";
@@ -124,6 +124,288 @@ struct LLMStructuredOutput {
 struct LLMDataset {
     doi: String,
     score: f64,
+}
+
+/// Workflow manager for handling search operations with fragmented steps
+pub struct SearchWorkflow {
+    pub client: rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>,
+    pub llm_backend: LLMBackend,
+    pub llm_api_key: String,
+    pub model: String,
+    pub msg_id: String,
+    pub created: u64,
+}
+
+impl SearchWorkflow {
+    /// Initialize a new search workflow
+    pub async fn new(model: String) -> AppResult<Self> {
+        let created = SystemTime::now()
+            .duration_since(UNIX_EPOCH)?
+            .as_secs();
+        let msg_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
+
+        // Connect to MCP server
+        let transport = StreamableHttpClientTransport::from_uri(format!("http://{ADDRESS}/mcp"));
+        let client_info = ClientInfo {
+            protocol_version: Default::default(),
+            capabilities: ClientCapabilities::default(),
+            client_info: Implementation {
+                name: "MCP streamable HTTP client".to_string(),
+                version: "0.0.1".to_string(),
+            },
+        };
+        let client = match client_info.serve(transport).await {
+            Ok(client) => client,
+            Err(e) => {
+                tracing::error!("client error: {:?}", e);
+                return Err(AppError::Llm(format!("MCP client initialization failed: {e}")));
+            }
+        };
+
+        let (llm_backend, llm_api_key) = get_llm_config()
+            .map_err(AppError::Llm)?;
+
+        Ok(Self {
+            client,
+            llm_backend,
+            llm_api_key,
+            model,
+            msg_id,
+            created,
+        })
+    }
+
+    /// Step 1: Check if tool calls are needed and execute them
+    pub async fn execute_tool_calls(&self, messages: &[ApiChatMessage]) -> AppResult<(Option<Vec<llm::ToolCall>>, SearchResult)> {
+        // Convert messages to LLM ChatMessage format
+        let chat_messages: Vec<ChatMessage> = messages
+            .iter()
+            .map(|msg| msg.to_chat_message())
+            .collect();
+
+        // Configure LLM client with dynamic tools from MCP
+        let mut llm_builder = LLMBuilder::new()
+            .backend(self.llm_backend.clone())
+            .api_key(&self.llm_api_key)
+            .model(&self.model)
+            .max_tokens(1024)
+            .temperature(0.1)
+            .stream(false)
+            .system(SYSTEM_PROMPT_TOOLS);
+
+        // Convert MCP tools to LLM functions and add them to the llm builder
+        let tools = self.client.list_tools(Default::default()).await?;
+        for tool in &tools.tools {
+            let schema_value = serde_json::Value::Object(tool.input_schema.as_ref().clone());
+            let function = FunctionBuilder::new(tool.name.to_string())
+                .description(tool.description.as_deref().unwrap_or(""))
+                .json_schema(schema_value);
+            llm_builder = llm_builder.function(function);
+        }
+        let llm = llm_builder.build().expect("Failed to build LLM client");
+
+        // Query the LLM to check if tool call necessary
+        let (_response_text, tool_calls) = match llm.chat_with_tools(&chat_messages, llm.tools()).await {
+            Ok(response) => {
+                tracing::debug!("LLM tool call response: {response:#?}");
+                (response.text().unwrap_or_default().to_string(), response.tool_calls())
+            },
+            Err(e) => {
+                tracing::error!("Chat error: {}", e);
+                return Err(AppError::Llm(e.to_string()));
+            },
+        };
+
+        let mut search_results = SearchResult {
+            total_found: 0,
+            hits: vec![],
+        };
+
+        // Execute each tool call if any
+        if let Some(tc) = &tool_calls {
+            for call in tc {
+                tracing::debug!("Calling tool {}", call.function.name);
+                let arguments = match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
+                    Ok(value) => value.as_object().cloned(),
+                    Err(_) => None,
+                };
+
+                // Call MCP tools
+                let tool_results = self.client
+                    .call_tool(CallToolRequestParam {
+                        name: call.function.name.clone().into(),
+                        arguments,
+                    })
+                    .await?;
+
+                // Extract and parse structured JSON content from the tool result
+                let tool_result_text = tool_results
+                    .content
+                    .iter()
+                    .filter_map(|annotated| match &annotated.raw {
+                        rmcp::model::RawContent::Text(text_content) => Some(text_content.text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                // Parse the structured JSON response from MCP search data tool
+                let new_search_result = match serde_json::from_str::<SearchResult>(&tool_result_text) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::error!("Failed to parse search result JSON: {e}");
+                        return Err(AppError::Serde(e));
+                    }
+                };
+
+                // Accumulate results from multiple tool calls
+                search_results.hits.extend(new_search_result.hits);
+                search_results.total_found += new_search_result.total_found;
+            }
+        }
+
+        Ok((tool_calls, search_results))
+    }
+
+    /// Step 2: Generate summary and scores using LLM with structured output, then create final response
+    pub async fn generate_summary_and_scores(
+        &self,
+        messages: &[ApiChatMessage],
+        search_results: SearchResult,
+    ) -> AppResult<SearchResponse> {
+        if search_results.total_found == 0 || search_results.hits.is_empty() {
+            return Err(AppError::NoDataFound("No datasets found for your query.".to_string()));
+        }
+        let last_message_content = messages
+            .last()
+            .map(|msg| msg.content.as_str())
+            .unwrap_or("");
+
+        // Format the context for the LLM based on tool call results
+        let mut formatted_context = format!(
+            "Found {} datasets relevant to the query '{}':\n\n",
+            search_results.total_found, last_message_content
+        );
+        for (i, dataset) in search_results.hits.iter().enumerate() {
+            formatted_context.push_str(&format!("{}. **{}**\n", i + 1, dataset.title));
+            if let Some(doi) = &dataset.doi {
+                formatted_context.push_str(&format!("   DOI: https://doi.org/{doi}\n"));
+            }
+            formatted_context.push_str(&format!("   Zenodo: {}\n", dataset.zenodo_url));
+            formatted_context.push_str(&format!("   Published: {}\n", dataset.publication_date));
+            if let Some(creators) = &dataset.creators {
+                if !creators.is_empty() {
+                    formatted_context.push_str(&format!("   Authors: {}\n", creators.join(", ")));
+                }
+            }
+            if let Some(keywords) = &dataset.keywords {
+                if !keywords.is_empty() {
+                    formatted_context.push_str(&format!("   Keywords: {}\n", keywords.join(", ")));
+                }
+            }
+            formatted_context.push_str(&format!("   Description: {}\n\n", dataset.description));
+        }
+
+        // Convert messages and add formatted context
+        let mut chat_messages: Vec<ChatMessage> = messages
+            .iter()
+            .map(|msg| msg.to_chat_message())
+            .collect();
+        chat_messages.push(ChatMessage::assistant().content(&formatted_context).build());
+
+        // Create LLM client with structured output schema
+        let schema: StructuredOutputFormat = serde_json::from_str(SEARCH_OUTPUT_SCHEMA)?;
+        let llm_resolution = LLMBuilder::new()
+            .backend(self.llm_backend.clone())
+            .api_key(&self.llm_api_key)
+            .model(&self.model)
+            .max_tokens(512)
+            .temperature(0.1)
+            .stream(false)
+            .system(SYSTEM_PROMPT_RESOLUTION)
+            .schema(schema)
+            .build().expect("Failed to build LLM client");
+
+        // Send chat request using additional infos retrieved by the tool call
+        let response_text = match llm_resolution.chat(&chat_messages).await {
+            Ok(response) => response.text().unwrap_or_default().to_string(),
+            Err(e) => {
+                tracing::error!("Chat error: {e}");
+                return Err(AppError::Llm(e.to_string()));
+            }
+        };
+
+        // Parse the response
+        let llm_response = match serde_json::from_str::<LLMStructuredOutput>(&response_text) {
+            Ok(llm_response) => llm_response,
+            Err(e) => {
+                tracing::error!("Failed to parse LLM response as JSON: {}", e);
+                return Err(AppError::Serde(e));
+            }
+        };
+
+        // Create a lookup map for LLM scores by DOI
+        let score_lookup: std::collections::HashMap<String, f64> = llm_response
+            .datasets
+            .into_iter()
+            .map(|llm_dataset| (llm_dataset.doi, llm_dataset.score))
+            .collect();
+
+        // Clone search results to make it mutable for scoring
+        let mut search_results = search_results;
+
+        // Add scores to all datasets from search results
+        for hit in &mut search_results.hits {
+            if let Some(doi) = &hit.doi {
+                let doi_url = format!("https://doi.org/{doi}");
+                hit.score = Some(score_lookup.get(&doi_url).copied().unwrap_or(0.0));
+            } else {
+                hit.score = Some(0.0);
+            }
+        }
+
+        // Sort hits by score in descending order (highest score first)
+        search_results.hits.sort_by(|a, b| {
+            let score_a = a.score.unwrap_or(0.0);
+            let score_b = b.score.unwrap_or(0.0);
+            score_b
+                .partial_cmp(&score_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        Ok(SearchResponse {
+            hits: search_results.hits,
+            summary: llm_response.summary,
+        })
+    }
+
+
+    /// Create SSE event for streaming responses
+    pub fn create_sse_event(&self, event_type: &str, data: impl Serialize) -> AppResult<sse::Event> {
+        Ok(sse::Event::default()
+            .event(event_type)
+            .data(serde_json::to_string(&data)?))
+    }
+
+    /// Create streaming chunk for OpenAI compatibility
+    pub fn create_stream_chunk(&self, content: Option<String>, finish_reason: Option<String>) -> AppResult<sse::Event> {
+        let chunk = StreamChunk {
+            id: self.msg_id.clone(),
+            object: "chat.completion.chunk".to_string(),
+            created: self.created,
+            model: self.model.clone(),
+            choices: vec![StreamChoice {
+                index: 0,
+                delta: StreamDelta {
+                    role: if content.is_some() { Some("assistant".to_string()) } else { None },
+                    content,
+                    function_call: None,
+                },
+                finish_reason,
+            }],
+        };
+        Ok(sse::Event::default().data(serde_json::to_string(&chunk)?))
+    }
 }
 
 // Define a simple JSON schema for structured output
@@ -253,619 +535,119 @@ fn send_error_event(error_message: &str) -> AppResult<sse::Event> {
     // )
 }
 
+/// Create a streaming search response
 fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::Event>> {
     async_stream::stream! {
-        let created = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs();
-        let msg_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
-
-        // Connect to MCP server
-        let transport = StreamableHttpClientTransport::from_uri(format!("http://{ADDRESS}/mcp"));
-        let client_info = ClientInfo {
-            protocol_version: Default::default(),
-            capabilities: ClientCapabilities::default(),
-            client_info: Implementation {
-                name: "MCP streamable HTTP client".to_string(),
-                version: "0.0.1".to_string(),
-            },
-        };
-        let client = match client_info.serve(transport).await {
-            Ok(client) => client,
+        // Initialize the workflow
+        let workflow = match SearchWorkflow::new(resp.model.clone()).await {
+            Ok(workflow) => workflow,
             Err(e) => {
-                tracing::error!("client error: {:?}", e);
+                tracing::error!("Failed to initialize workflow: {:?}", e);
                 yield Ok(send_error_event("Error connecting to search service")?);
                 return;
             }
         };
-        let (llm_backend, llm_api_key) = match get_llm_config() {
-            Ok((backend, key)) => (backend, key),
+        // Step 1: Execute tool calls if needed
+        let (tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
+            Ok(result) => result,
             Err(e) => {
-                tracing::error!("{}", e);
+                tracing::error!("Tool call execution failed: {:?}", e);
+                yield Ok(send_error_event("Error searching for datasets")?);
                 return;
             }
         };
-
-        // Convert messages to LLM ChatMessage format
-        let mut chat_messages: Vec<ChatMessage> = resp
-            .messages
-            .iter()
-            .map(|msg| msg.to_chat_message())
-            .collect();
-
-        // Configure Mistral LLM client with dynamic tools from MCP
-        let mut llm_builder = LLMBuilder::new()
-            .backend(llm_backend.clone())
-            .api_key(&llm_api_key)
-            .model(&resp.model)
-            .max_tokens(1024)
-            .temperature(0.1)
-            .stream(false)
-            .system(SYSTEM_PROMPT_TOOLS);
-
-        // Convert MCP tools to LLM functions and add them to the llm builder
-        let tools = client.list_tools(Default::default()).await?;
-        // tracing::debug!("Available MCP tools: {tools:#?}");
-        for tool in &tools.tools {
-            let schema_value = serde_json::Value::Object(tool.input_schema.as_ref().clone());
-            let function = FunctionBuilder::new(tool.name.to_string())
-                .description(tool.description.as_deref().unwrap_or(""))
-                .json_schema(schema_value);
-            llm_builder = llm_builder.function(function);
-        }
-        let llm = llm_builder.build().expect("Failed to build LLM client");
-
-        // Query the LLM to check if tool call necessary (with tools extracted from MCP server)
-        // https://github.com/graniet/llm/blob/main/examples/openai_example.rs
-        // https://github.com/graniet/llm/blob/main/examples/google_tool_calling_example.rs
-        let (response_text, tool_calls) = match llm.chat_with_tools(&chat_messages, llm.tools()).await {
-            Ok(response) => {
-                tracing::debug!("LLM tool call response: {response:#?}");
-                (response.text().unwrap_or_default().to_string(), response.tool_calls())
-            },
-            Err(e) => {
-                tracing::error!("Chat error: {}", e);
-                return;
-            },
-        };
-        yield Ok(sse::Event::default()
-            .event("tool_call_requested")
-            .data(serde_json::to_string(&tool_calls)?));
-
-        // Get last msg from the user, and init search results
-        let last_message_content = resp
-            .messages
-            .last()
-            .map(|msg| msg.content.as_str())
-            .unwrap_or("");
-        let mut search_results = SearchResult {
-            total_found: 0,
-            hits: vec![],
-        };
-        // Execute each tool call if any
-        if let Some(tc) = tool_calls {
-            // tracing::debug!("Tool calls requested: {tc:#?}");
-            for call in &tc {
-                tracing::debug!("Calling tool {}", call.function.name);
-                let arguments = match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
-                    Ok(value) => value.as_object().cloned(),
-                    Err(_) => None,
-                };
-                // Call MCP tools
-                let tool_results = match client
-                    .call_tool(CallToolRequestParam {
-                        name: call.function.name.clone().into(),
-                        arguments,
-                    })
-                    .await
-                {
-                    Ok(results) => results,
-                    Err(e) => {
-                        tracing::error!("MCP tool call failed: {}", e);
-                        yield Ok(send_error_event("Error searching for datasets")?);
-                        return;
-                    }
-                };
-
-                // Extract and parse structured JSON content from the tool result
-                let tool_result_text = tool_results
-                    .content
-                    .iter()
-                    .filter_map(|annotated| match &annotated.raw {
-                        rmcp::model::RawContent::Text(text_content) => Some(text_content.text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
-
-                // Parse the structured JSON response from MCP search data tool
-                let new_search_result = match serde_json::from_str::<SearchResult>(&tool_result_text) {
-                    Ok(result) => result,
-                    Err(e) => {
-                        tracing::error!("Failed to parse search result JSON: {e}");
-                        yield Ok(send_error_event("Issue querying the search service.")?);
-                        return;
-                    }
-                };
-                // Accumulate results from multiple tool calls
-                search_results.hits.extend(new_search_result.hits);
-                search_results.total_found += new_search_result.total_found;
-
-                // Stream the tool results (without scores or summary)
-                yield Ok(sse::Event::default()
-                    .event("tool_call_result")
-                    .data(serde_json::to_string(&search_results)?));
-            } // Tool call end
-
-            // Format the context for the LLM based on tool call results
-            let mut formatted_context = format!(
-                "Found {} datasets relevant to the query '{}':\n\n",
-                search_results.total_found, last_message_content
-            );
-            for (i, dataset) in search_results.hits.iter().enumerate() {
-                formatted_context.push_str(&format!("{}. **{}**\n", i + 1, dataset.title));
-                if let Some(doi) = &dataset.doi {
-                    formatted_context.push_str(&format!("   DOI: https://doi.org/{doi}\n"));
-                }
-                formatted_context.push_str(&format!("   Zenodo: {}\n", dataset.zenodo_url));
-                formatted_context.push_str(&format!("   Published: {}\n", dataset.publication_date));
-                if let Some(creators) = &dataset.creators {
-                    if !creators.is_empty() {
-                        formatted_context.push_str(&format!("   Authors: {}\n", creators.join(", ")));
-                    }
-                }
-                if let Some(keywords) = &dataset.keywords {
-                    if !keywords.is_empty() {
-                        formatted_context.push_str(&format!("   Keywords: {}\n", keywords.join(", ")));
-                    }
-                }
-                formatted_context.push_str(&format!("   Description: {}\n\n", dataset.description));
+        // Stream tool call requested event
+        yield Ok(workflow.create_sse_event("tool_call_requested", &tool_calls)?);
+        // If no tool calls were made, handle as direct response
+        if tool_calls.is_none() || search_results.total_found == 0 {
+            if tool_calls.is_none() {
+                // Direct response without tool calls
+                yield Ok(workflow.create_stream_chunk(
+                    Some("I can help you find datasets and tools for scientific research. Please provide more specific details about what you're looking for.".to_string()),
+                    Some("stop".to_string())
+                )?);
+            } else {
+                yield Ok(send_error_event("Nothing found for your query.")?);
             }
-            chat_messages.push(ChatMessage::assistant().content(&formatted_context).build());
-        } else {
-            // Handle case where no tool calls were made (regular chat response)
-            tracing::debug!("Direct response! {}", response_text);
-            yield Ok(sse::Event::default().event("message")
-                .data(
-                    serde_json::to_string(&serde_json::json!({
-                        "id": msg_id.to_string(),
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": resp.model.clone(),
-                        "choices": [{
-                            "index": 0,
-                            // "message": { // when not streaming
-                            "delta": {
-                                "role": "assistant",
-                                "content": response_text.to_string()
-                            },
-                            "finish_reason": "stop"
-                        }]
-                    }))?
-                ));
-                // Similar to llm crate message format:
-                // .data(
-                //     serde_json::to_string(&serde_json::json!({
-                //         "choices": {"message": {
-                //             "role": "assistant",
-                //             "content": response_text.to_string(),
-                //             "tool_calls": null,
-                //         }},
-                //     }))?,
-                // ));
             return;
         }
-
-        // Check if no datasets were found and return early
-        if search_results.total_found == 0 || search_results.hits.is_empty() {
-            yield Ok(send_error_event("Nothing found for your query.")?);
-            return;
-        }
-
-        // Create LLM client with structured output schema to answer user question
-        let schema: StructuredOutputFormat = serde_json::from_str(SEARCH_OUTPUT_SCHEMA)?;
-        let llm_resolution = LLMBuilder::new()
-            .backend(llm_backend)
-            .api_key(&llm_api_key)
-            .model(&resp.model)
-            .max_tokens(512)
-            .temperature(0.1)
-            .stream(false)
-            .system(SYSTEM_PROMPT_RESOLUTION)
-            .schema(schema)
-            .build().expect("Failed to build LLM client");
-
-        tracing::debug!("Calling the LLM");
-        // Send chat request using additional infos retrieved by the tool call
-        let response_text = match llm_resolution.chat(&chat_messages).await {
-            Ok(response) => {
-                // Extract the response text immediately to avoid Send issues
-                response.text().unwrap_or_default().to_string()
-            }
-            Err(e) => {
-                tracing::error!("Chat error: {e}");
+        // Stream the tool results (without scores or summary)
+        yield Ok(workflow.create_sse_event("tool_call_result", &search_results)?);
+        // Step 2: Generate summary and scores using LLM
+        let final_response = match workflow.generate_summary_and_scores(&resp.messages, search_results).await {
+            Ok(response) => response,
+            Err(_) => {
+                // Fallback if LLM processing fails
+                yield Ok(send_error_event("Error processing search results")?);
                 return;
             }
         };
-        tracing::debug!("Done calling the LLM");
-
-        // Parse the response after dropping the response object
-        match serde_json::from_str::<LLMStructuredOutput>(&response_text) {
-            Ok(llm_response) => {
-                // Create a lookup map for LLM scores by DOI
-                let score_lookup: std::collections::HashMap<String, f64> = llm_response
-                    .datasets
-                    .into_iter()
-                    .map(|llm_dataset| (llm_dataset.doi, llm_dataset.score))
-                    .collect();
-
-                // Add scores to all datasets from search results
-                for hit in &mut search_results.hits {
-                    if let Some(doi) = &hit.doi {
-                        let doi_url = format!("https://doi.org/{doi}");
-                        hit.score =
-                            Some(score_lookup.get(&doi_url).copied().unwrap_or(0.0));
-                    } else {
-                        hit.score = Some(0.0);
-                    }
-                }
-
-                // Sort hits by score in descending order (highest score first)
-                search_results.hits.sort_by(|a, b| {
-                    let score_a = a.score.unwrap_or(0.0);
-                    let score_b = b.score.unwrap_or(0.0);
-                    score_b
-                        .partial_cmp(&score_a)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-                let res = SearchResponse {
-                    hits: search_results.hits,
-                    summary: llm_response.summary,
-                };
-                // Stream response
-                yield Ok(sse::Event::default()
-                    .event("search_response")
-                    .data(serde_json::to_string(&res)?));
-                // Final stop chunk
-                yield Ok(sse::Event::default()
-                    .data(serde_json::to_string(&StreamChunk {
-                        id: msg_id.to_string(),
-                        object: "chat.completion.chunk".to_string(),
-                        created,
-                        model: resp.model.clone(),
-                        choices: vec![StreamChoice {
-                            index: 0,
-                            delta: StreamDelta {
-                                role: None,
-                                content: None,
-                                function_call: None,
-                            },
-                            finish_reason: Some("stop".to_string()),
-                        }],
-                    })?));
-                return;
-            }
-            Err(e) => {
-                tracing::error!("Failed to parse LLM response as JSON: {}", e);
-                // Fallback: add to messages and return the original response format
-                // resp.messages.push(Message {
-                //     role: "assistant".into(),
-                //     content: response_text,
-                // });
-            }
-        }
-        tracing::debug!("Done calling the LLM");
+        // Stream the final search response
+        yield Ok(workflow.create_sse_event("search_response", &final_response)?);
+        // Final stop chunk
+        yield Ok(workflow.create_stream_chunk(None, Some("stop".to_string()))?);
     }
 }
 
-async fn regular_search_handler(headers: HeaderMap, mut resp: SearchInput) -> impl IntoResponse {
-    // TODO: get the response by just calling the streaming function
-    // (can't find how to properly get the event data)
-    // // Create the stream using the same logic as streaming handler
-    // let stream = create_search_stream(resp);
-    // // Collect events from the stream and look for search_response
-    // let mut stream = Box::pin(stream);
-    // let mut search_response_data: Option<String> = None;
-    // while let Some(event_result) = stream.next().await {
-    //     let event = event_result.unwrap(); // Stream always returns Ok
-    //     tracing::debug!("Received event: {:?}", event);
-    //     // We need to manually reconstruct the event to check its content
-    //     // The event is built with .event("search_response") and .data(json_string)
-    //     // Since we can't directly inspect the event type, we'll use debug output
-    //     let event_debug = format!("{event:?}");
-    //     // Check if this looks like a search_response event
-    //     if event_debug.contains("search_response") {
-    //         tracing::debug!("Found search_response event: {}", event_debug);
-    //         // Extract data from debug string - look for the JSON data field
-    //         if let Some(data_start) = event_debug.find("data: Some(\"") {
-    //             let data_content = &event_debug[data_start + 12..];
-    //             if let Some(data_end) = data_content.find("\")") {
-    //                 let escaped_json = &data_content[..data_end];
-    //                 // Properly unescape the JSON string
-    //                 let unescaped_json = escaped_json
-    //                     .replace("\\\"", "\"")
-    //                     .replace("\\\\", "\\")
-    //                     .replace("\\n", "\n")
-    //                     .replace("\\r", "\r")
-    //                     .replace("\\t", "\t");
-    //                 // Try to parse as SearchResponse
-    //                 match serde_json::from_str::<SearchResponse>(&unescaped_json) {
-    //                     Ok(_) => {
-    //                         search_response_data = Some(unescaped_json);
-    //                         break;
-    //                     }
-    //                     Err(e) => {
-    //                         tracing::warn!("Failed to parse SearchResponse: {}", e);
-    //                         tracing::warn!("Unescaped JSON: {}", unescaped_json);
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-    // // If we found search response data, parse and return it
-    // if let Some(data) = search_response_data {
-    //     if let Ok(search_response) = serde_json::from_str::<SearchResponse>(&data) {
-    //         return (StatusCode::OK, Json(serde_json::json!(search_response)));
-    //     }
-    // }
-
+/// Search handler for non-streaming responses
+async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl IntoResponse {
     // Validate API key only if SEARCH_API_KEY is set
     if let Ok(secret_key) = std::env::var("SEARCH_API_KEY") {
         let auth_header = headers.get("authorization");
-        if auth_header.is_none() || auth_header.unwrap().to_str().unwrap_or("") != secret_key {
+        let auth_value = auth_header.and_then(|h| h.to_str().ok()).unwrap_or("");
+        if auth_value != secret_key {
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({"error": "unauthorized"})),
             );
         }
     }
-    let (llm_backend, api_key) = match get_llm_config() {
-        Ok((backend, key)) => (backend, key),
+    // Initialize the workflow
+    let workflow = match SearchWorkflow::new(resp.model.clone()).await {
+        Ok(workflow) => workflow,
         Err(e) => {
+            tracing::error!("Failed to initialize workflow: {:?}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e})),
+                Json(serde_json::json!({"error": "Error connecting to search service"})),
             );
         }
     };
-    // let llm_model = std::env::var("MISTRAL_MODEL").unwrap_or(DEFAULT_MODEL.into());
-
-    // Connect to MCP server
-    let transport = StreamableHttpClientTransport::from_uri(format!("http://{ADDRESS}/mcp"));
-    let client_info = ClientInfo {
-        protocol_version: Default::default(),
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "MCP streamable HTTP client".to_string(),
-            version: "0.0.1".to_string(),
-        },
-    };
-    let client = client_info
-        .serve(transport)
-        .await
-        .inspect_err(|e| {
-            tracing::error!("client error: {:?}", e);
-        })
-        .unwrap();
-    // Check server info
-    // let server_info = client.peer_info();
-    // tracing::debug!("Connected to server: {server_info:#?}");
-
-    // Convert input messages to llm ChatMessage format, replacing last message content with tool result
-    // let mut search_resp = SearchResponse {
-    //     model: llm_model,
-    //     messages: messages
-    // };
-
-    // Define a simple JSON schema for structured output
-    let schema = r#"
-        {
-            "name": "search_results",
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "summary": {
-                        "type": "string",
-                        "description": "Summary of the findings in 1 sentence"
-                    },
-                    "datasets": {
-                        "type": "array",
-                        "description": "List of most relevant datasets",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "doi": {
-                                    "type": "string",
-                                    "description": "Digital Object Identifier of the dataset"
-                                },
-                                "score": {
-                                    "type": "number",
-                                    "description": "Relevance score of the dataset based on the search query (between 0 and 1)"
-                                }
-                            },
-                            "additionalProperties": false,
-                            "required": ["doi", "score"]
-                        }
-                    }
-                },
-                "additionalProperties": false,
-                "required": ["summary", "datasets"]
-            },
-            "strict": true
-        }
-    "#;
-    let schema: StructuredOutputFormat = serde_json::from_str(schema).unwrap();
-
-    // Configure Mistral LLM client with dynamic tools from MCP
-    let llm_builder = LLMBuilder::new()
-        .backend(llm_backend)
-        .api_key(api_key)
-        .model(&resp.model)
-        .max_tokens(512)
-        .temperature(0.1)
-        .stream(false)
-        .system(SYSTEM_PROMPT_RESOLUTION)
-        .schema(schema);
-
-    let llm = llm_builder.build().expect("Failed to build LLM client");
-
-    tracing::debug!("Calling Zenodo API");
-    // Call a MCP tool
-    let last_message_content = resp
-        .messages
-        .last()
-        .map(|msg| msg.content.as_str())
-        .unwrap_or("");
-    let tool_results = client
-        .call_tool(CallToolRequestParam {
-            name: "search_data".into(),
-            arguments: serde_json::json!({"question": last_message_content})
-                .as_object()
-                .cloned(),
-        })
-        .await
-        .expect("MCP tool call failed");
-    tracing::debug!("Done calling Zenodo API");
-    // Extract and parse structured JSON content from the tool result
-    let tool_result_text = tool_results
-        .content
-        .iter()
-        .filter_map(|annotated| match &annotated.raw {
-            rmcp::model::RawContent::Text(text_content) => Some(text_content.text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    // Parse the structured JSON response from MCP search data tool
-    let mut search_result = match serde_json::from_str::<SearchResult>(&tool_result_text) {
+    // Step 1: Execute tool calls if needed
+    let (_tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
         Ok(result) => result,
         Err(e) => {
-            tracing::error!("Failed to parse search result JSON: {}", e);
-            // Return early with no datasets found message
+            tracing::error!("Tool call execution failed: {:?}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Error searching for datasets"})),
+            );
+        }
+    };
+    // If no datasets were found, return early
+    if search_results.total_found == 0 || search_results.hits.is_empty() {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "hits": [],
+                "summary": "No datasets found for your query."
+            })),
+        );
+    }
+    // Step 2: Generate summary and scores using LLM
+    let final_response = match workflow.generate_summary_and_scores(&resp.messages, search_results).await {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::error!("LLM processing failed: {:?}", e);
+            // Fallback response without scoring
             return (
                 StatusCode::OK,
                 Json(serde_json::json!({
-                    "summary": "No datasets found for your query.",
-                    "datasets": []
+                    "hits": [],
+                    "summary": "Found datasets for your query, but could not process relevance scores."
                 })),
             );
         }
     };
-    // Check if no datasets were found and return early
-    if search_result.total_found == 0 || search_result.hits.is_empty() {
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "summary": "No datasets found for your query.",
-                "datasets": []
-            })),
-        );
-    }
-
-    // Format the context for the LLM
-    let mut formatted_context = format!(
-        "Found {} datasets relevant to the query '{}':\n\n",
-        search_result.total_found, last_message_content
-    );
-    for (i, dataset) in search_result.hits.iter().enumerate() {
-        formatted_context.push_str(&format!("{}. **{}**\n", i + 1, dataset.title));
-        if let Some(doi) = &dataset.doi {
-            formatted_context.push_str(&format!("   DOI: https://doi.org/{doi}\n"));
-        }
-        formatted_context.push_str(&format!("   Zenodo: {}\n", dataset.zenodo_url));
-        formatted_context.push_str(&format!("   Published: {}\n", dataset.publication_date));
-        if let Some(creators) = &dataset.creators {
-            if !creators.is_empty() {
-                formatted_context.push_str(&format!("   Authors: {}\n", creators.join(", ")));
-            }
-        }
-        if let Some(keywords) = &dataset.keywords {
-            if !keywords.is_empty() {
-                formatted_context.push_str(&format!("   Keywords: {}\n", keywords.join(", ")));
-            }
-        }
-        formatted_context.push_str(&format!("   Description: {}\n\n", dataset.description));
-    }
-
-    // Convert messages to LLM ChatMessage format, replacing last message content with formatted context
-    let chat_messages: Vec<ChatMessage> = resp
-        .messages
-        .iter()
-        .enumerate()
-        .map(|(i, msg)| {
-            let content = if i == resp.messages.len() - 1 {
-                format!("{}\n\n{}", &msg.content, formatted_context)
-            } else {
-                msg.content.clone()
-            };
-            // Use the to_chat_message method but with modified content
-            let modified_msg = ApiChatMessage::new(msg.role.clone(), content);
-            modified_msg.to_chat_message()
-        })
-        .collect();
-
-    // TODO: call with structured output to retrieve the list of most relevant according to the LLM
-
-    tracing::debug!("Calling the LLM");
-    // Send chat request using additional infos retrieved by the tool call
-    match llm.chat(&chat_messages).await {
-        Ok(response) => {
-            tracing::debug!("LLM structured response: {response:#?}");
-            // Parse the JSON response from the LLM (structured output)
-            let response_text = response.text().unwrap_or_default();
-            match serde_json::from_str::<LLMStructuredOutput>(&response_text) {
-                Ok(llm_response) => {
-                    // Create a lookup map for LLM scores by DOI
-                    let score_lookup: std::collections::HashMap<String, f64> = llm_response
-                        .datasets
-                        .into_iter()
-                        .map(|llm_dataset| (llm_dataset.doi, llm_dataset.score))
-                        .collect();
-
-                    // Add scores to all datasets from search results
-                    for dataset in &mut search_result.hits {
-                        if let Some(doi) = &dataset.doi {
-                            let doi_url = format!("https://doi.org/{doi}");
-                            dataset.score =
-                                Some(score_lookup.get(&doi_url).copied().unwrap_or(0.0));
-                        } else {
-                            dataset.score = Some(0.0);
-                        }
-                    }
-
-                    // Sort datasets by score in descending order (highest score first)
-                    search_result.hits.sort_by(|a, b| {
-                        let score_a = a.score.unwrap_or(0.0);
-                        let score_b = b.score.unwrap_or(0.0);
-                        score_b
-                            .partial_cmp(&score_a)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-
-                    let resp = SearchResponse {
-                        hits: search_result.hits,
-                        summary: llm_response.summary,
-                    };
-                    return (StatusCode::OK, Json(serde_json::json!(resp)));
-                }
-                Err(e) => {
-                    tracing::error!("Failed to parse LLM response as JSON: {}", e);
-                    // Fallback: add to messages and return the original response format
-                    resp.messages.push(ApiChatMessage::assistant(response_text));
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!("Chat error: {e}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Chat error: {}", e)})),
-            );
-        }
-    }
-    tracing::debug!("Done calling the LLM");
-
-    (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
+    (StatusCode::OK, Json(serde_json::json!(final_response)))
 }

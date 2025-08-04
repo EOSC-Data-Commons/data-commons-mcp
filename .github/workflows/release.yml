@@ -1,0 +1,60 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    name: 📦 Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update
+      - run: cargo install cargo-deny
+      - run: cargo fmt -- --check
+      - run: cargo clippy --all --all-targets --all-features
+      - run: cargo deny check
+      - run: cargo build --release
+
+  docker:
+    name: 🐳 Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t data-commons-mcp .
+
+      # - name: Test Docker image
+      #   run: |
+      #     CONTAINER_ID=$(docker run -d -p 8000:8000 data-commons-mcp)
+      #     echo "Started container: $CONTAINER_ID"
+      #     sleep 5
+      #     docker stop $CONTAINER_ID
+      #     docker rm $CONTAINER_ID
+
+  generate-changelog:
+    name: 🏔️ Generate changelog for GitHub release
+    runs-on: ubuntu-latest
+    outputs:
+      release_body: ${{ steps.git-cliff.outputs.content }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate a changelog
+        uses: orhun/git-cliff-action@main
+        id: git-cliff
+        with:
+          config: cliff.toml
+          args: -vv --latest --strip header
+        env:
+          OUTPUT: CHANGES.md
+
+      - name: Release
+        uses: softprops/action-gh-release@v2.2.1
+        with:
+          body_path: CHANGES.md
+        if: startsWith(github.ref, 'refs/tags/')

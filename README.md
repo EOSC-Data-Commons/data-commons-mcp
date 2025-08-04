@@ -36,7 +36,7 @@ The HTTP API comprises 2 main endpoints:
 
 ```sh
 rustup update
-cargo install cargo-deny cargo-watch
+cargo install cargo-release cargo-deny cargo-watch git-cliff
 ```
 
 Create a `.cargo/config.toml` file with your [Mistral API key](https://admin.mistral.ai/organization/api-keys) or OpenAI API key:
@@ -162,3 +162,10 @@ Update dependencies in `Cargo.lock`:
 cargo update
 ```
 
+### 🏷️ Release
+
+```sh
+cargo release patch
+```
+
+> Or `minor` / `major`
