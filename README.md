@@ -16,7 +16,7 @@ The HTTP API comprises 2 main endpoints:
     - [x] Search datasets
     - [ ] Search tools
     - [ ] Search citations related to datasets or tools
-  
+
 - `/search`: simple **HTTP POST** endpoint (JSON) for querying the MCP server via an LLM provider
   - Uses [`axum`](https://github.com/tokio-rs/axum), [`utoipa`](https://github.com/juhaku/utoipa) for OpenAPI spec generation, [`llm`](https://github.com/graniet/llm) to interact with LLM providers (e.g. [Mistral](https://admin.mistral.ai/organization/api-keys), OpenAI)
   - Returns a streaming response: tool call requested, then tool call results, and final search results.
@@ -164,8 +164,16 @@ cargo update
 
 ### 🏷️ Release
 
+Dry run:
+
 ```sh
 cargo release patch
 ```
 
 > Or `minor` / `major`
+
+Create release:
+
+```sh
+cargo release patch --execute
+```

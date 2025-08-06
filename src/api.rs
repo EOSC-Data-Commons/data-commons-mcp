@@ -128,7 +128,8 @@ struct LLMDataset {
 
 /// Workflow manager for handling search operations with fragmented steps
 pub struct SearchWorkflow {
-    pub client: rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>,
+    pub client:
+        rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>,
     pub llm_backend: LLMBackend,
     pub llm_api_key: String,
     pub model: String,
@@ -139,9 +140,7 @@ pub struct SearchWorkflow {
 impl SearchWorkflow {
     /// Initialize a new search workflow
     pub async fn new(model: String) -> AppResult<Self> {
-        let created = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs();
+        let created = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let msg_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
 
         // Connect to MCP server
@@ -158,12 +157,13 @@ impl SearchWorkflow {
             Ok(client) => client,
             Err(e) => {
                 tracing::error!("client error: {:?}", e);
-                return Err(AppError::Llm(format!("MCP client initialization failed: {e}")));
+                return Err(AppError::Llm(format!(
+                    "MCP client initialization failed: {e}"
+                )));
             }
         };
 
-        let (llm_backend, llm_api_key) = get_llm_config()
-            .map_err(AppError::Llm)?;
+        let (llm_backend, llm_api_key) = get_llm_config().map_err(AppError::Llm)?;
 
         Ok(Self {
             client,
@@ -176,12 +176,13 @@ impl SearchWorkflow {
     }
 
     /// Step 1: Check if tool calls are needed and execute them
-    pub async fn execute_tool_calls(&self, messages: &[ApiChatMessage]) -> AppResult<(Option<Vec<llm::ToolCall>>, SearchResult)> {
+    pub async fn execute_tool_calls(
+        &self,
+        messages: &[ApiChatMessage],
+    ) -> AppResult<(Option<Vec<llm::ToolCall>>, SearchResult)> {
         // Convert messages to LLM ChatMessage format
-        let chat_messages: Vec<ChatMessage> = messages
-            .iter()
-            .map(|msg| msg.to_chat_message())
-            .collect();
+        let chat_messages: Vec<ChatMessage> =
+            messages.iter().map(|msg| msg.to_chat_message()).collect();
 
         // Configure LLM client with dynamic tools from MCP
         let mut llm_builder = LLMBuilder::new()
@@ -205,16 +206,20 @@ impl SearchWorkflow {
         let llm = llm_builder.build().expect("Failed to build LLM client");
 
         // Query the LLM to check if tool call necessary
-        let (_response_text, tool_calls) = match llm.chat_with_tools(&chat_messages, llm.tools()).await {
-            Ok(response) => {
-                tracing::debug!("LLM tool call response: {response:#?}");
-                (response.text().unwrap_or_default().to_string(), response.tool_calls())
-            },
-            Err(e) => {
-                tracing::error!("Chat error: {}", e);
-                return Err(AppError::Llm(e.to_string()));
-            },
-        };
+        let (_response_text, tool_calls) =
+            match llm.chat_with_tools(&chat_messages, llm.tools()).await {
+                Ok(response) => {
+                    tracing::debug!("LLM tool call response: {response:#?}");
+                    (
+                        response.text().unwrap_or_default().to_string(),
+                        response.tool_calls(),
+                    )
+                }
+                Err(e) => {
+                    tracing::error!("Chat error: {}", e);
+                    return Err(AppError::Llm(e.to_string()));
+                }
+            };
 
         let mut search_results = SearchResult {
             total_found: 0,
@@ -225,13 +230,15 @@ impl SearchWorkflow {
         if let Some(tc) = &tool_calls {
             for call in tc {
                 tracing::debug!("Calling tool {}", call.function.name);
-                let arguments = match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
-                    Ok(value) => value.as_object().cloned(),
-                    Err(_) => None,
-                };
+                let arguments =
+                    match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
+                        Ok(value) => value.as_object().cloned(),
+                        Err(_) => None,
+                    };
 
                 // Call MCP tools
-                let tool_results = self.client
+                let tool_results = self
+                    .client
                     .call_tool(CallToolRequestParam {
                         name: call.function.name.clone().into(),
                         arguments,
@@ -243,20 +250,23 @@ impl SearchWorkflow {
                     .content
                     .iter()
                     .filter_map(|annotated| match &annotated.raw {
-                        rmcp::model::RawContent::Text(text_content) => Some(text_content.text.as_str()),
+                        rmcp::model::RawContent::Text(text_content) => {
+                            Some(text_content.text.as_str())
+                        }
                         _ => None,
                     })
                     .collect::<Vec<_>>()
                     .join(" ");
 
                 // Parse the structured JSON response from MCP search data tool
-                let new_search_result = match serde_json::from_str::<SearchResult>(&tool_result_text) {
-                    Ok(result) => result,
-                    Err(e) => {
-                        tracing::error!("Failed to parse search result JSON: {e}");
-                        return Err(AppError::Serde(e));
-                    }
-                };
+                let new_search_result =
+                    match serde_json::from_str::<SearchResult>(&tool_result_text) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            tracing::error!("Failed to parse search result JSON: {e}");
+                            return Err(AppError::Serde(e));
+                        }
+                    };
 
                 // Accumulate results from multiple tool calls
                 search_results.hits.extend(new_search_result.hits);
@@ -274,7 +284,9 @@ impl SearchWorkflow {
         search_results: SearchResult,
     ) -> AppResult<SearchResponse> {
         if search_results.total_found == 0 || search_results.hits.is_empty() {
-            return Err(AppError::NoDataFound("No datasets found for your query.".to_string()));
+            return Err(AppError::NoDataFound(
+                "No datasets found for your query.".to_string(),
+            ));
         }
         let last_message_content = messages
             .last()
@@ -307,10 +319,8 @@ impl SearchWorkflow {
         }
 
         // Convert messages and add formatted context
-        let mut chat_messages: Vec<ChatMessage> = messages
-            .iter()
-            .map(|msg| msg.to_chat_message())
-            .collect();
+        let mut chat_messages: Vec<ChatMessage> =
+            messages.iter().map(|msg| msg.to_chat_message()).collect();
         chat_messages.push(ChatMessage::assistant().content(&formatted_context).build());
 
         // Create LLM client with structured output schema
@@ -324,7 +334,8 @@ impl SearchWorkflow {
             .stream(false)
             .system(SYSTEM_PROMPT_RESOLUTION)
             .schema(schema)
-            .build().expect("Failed to build LLM client");
+            .build()
+            .expect("Failed to build LLM client");
 
         // Send chat request using additional infos retrieved by the tool call
         let response_text = match llm_resolution.chat(&chat_messages).await {
@@ -379,16 +390,23 @@ impl SearchWorkflow {
         })
     }
 
-
     /// Create SSE event for streaming responses
-    pub fn create_sse_event(&self, event_type: &str, data: impl Serialize) -> AppResult<sse::Event> {
+    pub fn create_sse_event(
+        &self,
+        event_type: &str,
+        data: impl Serialize,
+    ) -> AppResult<sse::Event> {
         Ok(sse::Event::default()
             .event(event_type)
             .data(serde_json::to_string(&data)?))
     }
 
     /// Create streaming chunk for OpenAI compatibility
-    pub fn create_stream_chunk(&self, content: Option<String>, finish_reason: Option<String>) -> AppResult<sse::Event> {
+    pub fn create_stream_chunk(
+        &self,
+        content: Option<String>,
+        finish_reason: Option<String>,
+    ) -> AppResult<sse::Event> {
         let chunk = StreamChunk {
             id: self.msg_id.clone(),
             object: "chat.completion.chunk".to_string(),
@@ -397,7 +415,11 @@ impl SearchWorkflow {
             choices: vec![StreamChoice {
                 index: 0,
                 delta: StreamDelta {
-                    role: if content.is_some() { Some("assistant".to_string()) } else { None },
+                    role: if content.is_some() {
+                        Some("assistant".to_string())
+                    } else {
+                        None
+                    },
                     content,
                     function_call: None,
                 },
@@ -635,7 +657,10 @@ async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl I
         );
     }
     // Step 2: Generate summary and scores using LLM
-    let final_response = match workflow.generate_summary_and_scores(&resp.messages, search_results).await {
+    let final_response = match workflow
+        .generate_summary_and_scores(&resp.messages, search_results)
+        .await
+    {
         Ok(response) => response,
         Err(e) => {
             tracing::error!("LLM processing failed: {:?}", e);
