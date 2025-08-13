@@ -30,7 +30,7 @@ The HTTP API comprises 2 main endpoints:
 > - [Rust](https://www.rust-lang.org/tools/install)
 > - API key for a LLM provider: [Mistral.ai](https://console.mistral.ai/api-keys) or OpenAI, you can use the free tier, you just need to login
 >
-> Recommend VSCode extension: [`rust-analyzer`](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+> Recommended VSCode extension: [`rust-analyzer`](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
 
 ### 📥 Install dev dependencies
 
@@ -145,7 +145,7 @@ cargo clippy --all
 Automatically apply possible fixes:
 
 ```sh
-cargo fix
+cargo clippy --fix
 ```
 
 ### ⛓️ Check supply chain

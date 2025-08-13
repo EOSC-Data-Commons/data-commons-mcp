@@ -6,6 +6,8 @@ use axum::{
 };
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 use utoipa::ToSchema;
 
@@ -38,7 +40,7 @@ pub struct SearchInput {
     pub stream: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema, Clone)]
 pub struct SearchResponse {
     pub hits: Vec<SearchHit>,
     pub summary: String,
@@ -126,6 +128,58 @@ struct LLMDataset {
     score: f64,
 }
 
+/// Structure for logging search conversations and responses
+#[derive(Debug, Serialize)]
+struct SearchLog {
+    timestamp: String,
+    request_id: String,
+    model: String,
+    stream: bool,
+    conversation: Vec<ApiChatMessage>,
+    response: SearchResponse,
+    execution_time_ms: u64,
+}
+
+impl SearchLog {
+    fn new(
+        request_id: String,
+        model: String,
+        stream: bool,
+        conversation: Vec<ApiChatMessage>,
+        response: SearchResponse,
+        execution_time_ms: u64,
+    ) -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let timestamp = format!("{timestamp}");
+        Self {
+            timestamp,
+            request_id,
+            model,
+            stream,
+            conversation,
+            response,
+            execution_time_ms,
+        }
+    }
+
+    /// Write the log entry to the search.log file
+    fn write_to_file(&self) -> AppResult<()> {
+        let log_entry = serde_json::to_string(self)?;
+        let log_path = "data/search.log";
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)
+            .map_err(|e| AppError::Llm(format!("Failed to open log file: {e}")))?;
+        writeln!(file, "{log_entry}")
+            .map_err(|e| AppError::Llm(format!("Failed to write to log file: {e}")))?;
+        Ok(())
+    }
+}
+
 /// Workflow manager for handling search operations with fragmented steps
 pub struct SearchWorkflow {
     pub client:
@@ -142,7 +196,6 @@ impl SearchWorkflow {
     pub async fn new(model: String) -> AppResult<Self> {
         let created = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let msg_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
-
         // Connect to MCP server
         let transport = StreamableHttpClientTransport::from_uri(format!("http://{ADDRESS}/mcp"));
         let client_info = ClientInfo {
@@ -162,9 +215,7 @@ impl SearchWorkflow {
                 )));
             }
         };
-
         let (llm_backend, llm_api_key) = get_llm_config().map_err(AppError::Llm)?;
-
         Ok(Self {
             client,
             llm_backend,
@@ -428,6 +479,27 @@ impl SearchWorkflow {
         };
         Ok(sse::Event::default().data(serde_json::to_string(&chunk)?))
     }
+
+    /// Log search operation with execution time
+    pub fn log_search_operation(
+        &self,
+        stream: bool,
+        conversation: Vec<ApiChatMessage>,
+        response: SearchResponse,
+        execution_time_ms: u64,
+    ) {
+        let search_log = SearchLog::new(
+            self.msg_id.clone(),
+            self.model.clone(),
+            stream,
+            conversation,
+            response,
+            execution_time_ms,
+        );
+        if let Err(e) = search_log.write_to_file() {
+            tracing::error!("Failed to write search log: {:?}", e);
+        }
+    }
 }
 
 // Define a simple JSON schema for structured output
@@ -560,6 +632,7 @@ fn send_error_event(error_message: &str) -> AppResult<sse::Event> {
 /// Create a streaming search response
 fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::Event>> {
     async_stream::stream! {
+        let start_time = SystemTime::now();
         // Initialize the workflow
         let workflow = match SearchWorkflow::new(resp.model.clone()).await {
             Ok(workflow) => workflow,
@@ -582,19 +655,45 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::
         yield Ok(workflow.create_sse_event("tool_call_requested", &tool_calls)?);
         // If no tool calls were made, handle as direct response
         if tool_calls.is_none() || search_results.total_found == 0 {
+            let execution_time = start_time.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
             if tool_calls.is_none() {
                 // Direct response without tool calls
+                let response = SearchResponse {
+                    hits: vec![],
+                    summary: "I can help you find datasets and tools for scientific research. Please provide more specific details about what you're looking for.".to_string(),
+                };
+                // Log the search
+                workflow.log_search_operation(
+                    resp.stream,
+                    resp.messages.clone(),
+                    response,
+                    execution_time,
+                );
                 yield Ok(workflow.create_stream_chunk(
                     Some("I can help you find datasets and tools for scientific research. Please provide more specific details about what you're looking for.".to_string()),
                     Some("stop".to_string())
                 )?);
             } else {
+                // No results found
+                let response = SearchResponse {
+                    hits: vec![],
+                    summary: "Nothing found for your query.".to_string(),
+                };
+                // Log the search
+                workflow.log_search_operation(
+                    resp.stream,
+                    resp.messages.clone(),
+                    response,
+                    execution_time,
+                );
                 yield Ok(send_error_event("Nothing found for your query.")?);
             }
             return;
         }
+
         // Stream the tool results (without scores or summary)
         yield Ok(workflow.create_sse_event("tool_call_result", &search_results)?);
+
         // Step 2: Generate summary and scores using LLM
         let final_response = match workflow.generate_summary_and_scores(&resp.messages, search_results).await {
             Ok(response) => response,
@@ -604,8 +703,19 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::
                 return;
             }
         };
+
         // Stream the final search response
         yield Ok(workflow.create_sse_event("search_response", &final_response)?);
+
+        // Calculate execution time and log the search
+        let execution_time = start_time.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
+        workflow.log_search_operation(
+            resp.stream,
+            resp.messages.clone(),
+            final_response,
+            execution_time,
+        );
+
         // Final stop chunk
         yield Ok(workflow.create_stream_chunk(None, Some("stop".to_string()))?);
     }
@@ -613,6 +723,7 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::
 
 /// Search handler for non-streaming responses
 async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl IntoResponse {
+    let start_time = SystemTime::now();
     // Validate API key only if SEARCH_API_KEY is set
     if let Ok(secret_key) = std::env::var("SEARCH_API_KEY") {
         let auth_header = headers.get("authorization");
@@ -624,6 +735,7 @@ async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl I
             );
         }
     }
+
     // Initialize the workflow
     let workflow = match SearchWorkflow::new(resp.model.clone()).await {
         Ok(workflow) => workflow,
@@ -635,6 +747,7 @@ async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl I
             );
         }
     };
+
     // Step 1: Execute tool calls if needed
     let (_tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
         Ok(result) => result,
@@ -646,16 +759,25 @@ async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl I
             );
         }
     };
+
     // If no datasets were found, return early
     if search_results.total_found == 0 || search_results.hits.is_empty() {
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "hits": [],
-                "summary": "No datasets found for your query."
-            })),
+        let execution_time = start_time.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
+        let final_response = SearchResponse {
+            hits: vec![],
+            summary: "No datasets found for your query.".to_string(),
+        };
+        // Log the search
+        workflow.log_search_operation(
+            resp.stream,
+            resp.messages.clone(),
+            final_response.clone(),
+            execution_time,
         );
+
+        return (StatusCode::OK, Json(serde_json::json!(final_response)));
     }
+
     // Step 2: Generate summary and scores using LLM
     let final_response = match workflow
         .generate_summary_and_scores(&resp.messages, search_results)
@@ -665,14 +787,20 @@ async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl I
         Err(e) => {
             tracing::error!("LLM processing failed: {:?}", e);
             // Fallback response without scoring
-            return (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "hits": [],
-                    "summary": "Found datasets for your query, but could not process relevance scores."
-                })),
-            );
+            SearchResponse {
+                hits: vec![],
+                summary: "Found datasets for your query, but could not process relevance scores.".to_string(),
+            }
         }
     };
+
+    // Calculate execution time and log the search
+    let execution_time = start_time.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
+    workflow.log_search_operation(
+        resp.stream,
+        resp.messages.clone(),
+        final_response.clone(),
+        execution_time,
+    );
     (StatusCode::OK, Json(serde_json::json!(final_response)))
 }
