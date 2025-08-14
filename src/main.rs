@@ -11,8 +11,8 @@ use rmcp::transport::streamable_http_server::{
 mod error;
 mod mcp;
 use mcp::DataCommonsTools;
-mod api;
-use api::ADDRESS;
+mod search;
+use search::ADDRESS;
 use error::AppResult;
 // OpenAPI generation: https://github.com/juhaku/utoipa/blob/master/examples/axum-multipart/src/main.rs
 // MCP client: https://github.com/modelcontextprotocol/rust-sdk/blob/main/examples/clients/src/streamable_http.rs
@@ -48,7 +48,7 @@ async fn main() -> AppResult<()> {
 
     // Configure router with MCP and OpenAPI docs
     let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .routes(routes!(api::search_handler))
+        .routes(routes!(search::search_handler))
         .split_for_parts();
     let router = router
         .nest_service("/mcp", mcp_service)
