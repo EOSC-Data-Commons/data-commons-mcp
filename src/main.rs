@@ -12,8 +12,8 @@ mod error;
 mod mcp;
 use mcp::DataCommonsTools;
 mod search;
-use search::ADDRESS;
 use error::AppResult;
+use search::ADDRESS;
 // OpenAPI generation: https://github.com/juhaku/utoipa/blob/master/examples/axum-multipart/src/main.rs
 // MCP client: https://github.com/modelcontextprotocol/rust-sdk/blob/main/examples/clients/src/streamable_http.rs
 
