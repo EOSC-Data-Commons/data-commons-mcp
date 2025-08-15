@@ -182,7 +182,7 @@ impl SearchLog {
 
 /// Workflow manager for handling search operations with fragmented steps
 pub struct SearchWorkflow {
-    pub client:
+    pub mcp_client:
         rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>,
     pub llm_backend: LLMBackend,
     pub llm_api_key: String,
@@ -217,7 +217,7 @@ impl SearchWorkflow {
         };
         let (llm_backend, llm_api_key) = get_llm_config().map_err(AppError::Llm)?;
         Ok(Self {
-            client,
+            mcp_client: client,
             llm_backend,
             llm_api_key,
             model,
@@ -246,7 +246,7 @@ impl SearchWorkflow {
             .system(SYSTEM_PROMPT_TOOLS);
 
         // Convert MCP tools to LLM functions and add them to the llm builder
-        let tools = self.client.list_tools(Default::default()).await?;
+        let tools = self.mcp_client.list_tools(Default::default()).await?;
         for tool in &tools.tools {
             let schema_value = serde_json::Value::Object(tool.input_schema.as_ref().clone());
             let function = FunctionBuilder::new(tool.name.to_string())
@@ -289,7 +289,7 @@ impl SearchWorkflow {
 
                 // Call MCP tools
                 let tool_results = self
-                    .client
+                    .mcp_client
                     .call_tool(CallToolRequestParam {
                         name: call.function.name.clone().into(),
                         arguments,
