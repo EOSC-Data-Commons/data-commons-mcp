@@ -162,10 +162,7 @@ impl DataCommonsTools {
                     .take(10)
                     .map(|hit| {
                         let source = &hit["_source"];
-                        let id = hit["_id"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_string();
+                        let id = hit["_id"].as_str().unwrap_or("").to_string();
                         let empty_titles = vec![];
                         let titles = source["titles"].as_array().unwrap_or(&empty_titles);
                         let title = titles
