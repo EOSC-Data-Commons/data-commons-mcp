@@ -1,3 +1,4 @@
+use opensearch::{OpenSearch, http::transport::Transport};
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, tool::Parameters},
@@ -8,9 +9,8 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use utoipa::ToSchema;
-use opensearch::{OpenSearch, http::transport::Transport};
 use std::env;
+use utoipa::ToSchema;
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct UserQuestion {
@@ -61,7 +61,8 @@ pub struct DataCommonsTools {
 impl DataCommonsTools {
     #[allow(dead_code)]
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let opensearch_url = env::var("OPENSEARCH_URL").unwrap_or_else(|_| "http://127.0.0.1:9200".to_string());
+        let opensearch_url =
+            env::var("OPENSEARCH_URL").unwrap_or_else(|_| "http://127.0.0.1:9200".to_string());
         let transport = Transport::single_node(&opensearch_url)?;
         let opensearch_client = OpenSearch::new(transport);
         Ok(Self {
