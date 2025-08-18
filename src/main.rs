@@ -41,10 +41,19 @@ async fn main() -> AppResult<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
     let mcp_service = StreamableHttpService::new(
-        || Ok(DataCommonsTools::new()),
+        || {
+            DataCommonsTools::new().map_err(|e| {
+                std::io::Error::other(e.to_string())
+            })
+        },
         LocalSessionManager::default().into(),
         Default::default(),
     );
+    // let mcp_service = StreamableHttpService::new(
+    //     || Ok(DataCommonsTools::new()),
+    //     LocalSessionManager::default().into(),
+    //     Default::default(),
+    // );
 
     // Configure router with MCP and OpenAPI docs
     let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())

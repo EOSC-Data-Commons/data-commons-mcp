@@ -40,8 +40,9 @@ tracing-subscriber = { version = "0.3", features = [
     "std",
     "fmt",
 ] }
-reqwest = { version = "0.12", features = ["json"] }
 llm = { version = "1.3", features = ["mistral"] }
+opensearch = "2.3"
+# reqwest = { version = "0.12", features = ["json"] }
 # schemars = { version = "1", features = ["derive"] }
 
 [profile.release]

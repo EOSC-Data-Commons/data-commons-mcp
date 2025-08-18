@@ -106,14 +106,14 @@ impl From<std::io::Error> for AppError {
     }
 }
 
+/// Convenient type alias for Results using AppError
+pub type AppResult<T> = Result<T, AppError>;
+
 // impl From<reqwest::Error> for AppError {
 //     fn from(err: reqwest::Error) -> Self {
 //         AppError::Http(err)
 //     }
 // }
-
-/// Convenient type alias for Results using AppError
-pub type AppResult<T> = Result<T, AppError>;
 
 // /// Helper functions for creating common errors
 // impl AppError {

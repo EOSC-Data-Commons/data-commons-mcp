@@ -9,8 +9,8 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use utoipa::ToSchema;
-
-const OPENSEARCH_URL: &str = "http://127.0.0.1:9200/test_datacite/_search";
+use opensearch::{OpenSearch, http::transport::Transport};
+use std::env;
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct UserQuestion {
@@ -54,17 +54,20 @@ pub struct SearchHit {
 #[derive(Clone)]
 pub struct DataCommonsTools {
     tool_router: ToolRouter<DataCommonsTools>,
-    http_client: reqwest::Client,
+    opensearch_client: OpenSearch,
 }
 
 #[tool_router]
 impl DataCommonsTools {
     #[allow(dead_code)]
-    pub fn new() -> Self {
-        Self {
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let opensearch_url = env::var("OPENSEARCH_URL").unwrap_or_else(|_| "http://127.0.0.1:9200".to_string());
+        let transport = Transport::single_node(&opensearch_url)?;
+        let opensearch_client = OpenSearch::new(transport);
+        Ok(Self {
             tool_router: Self::tool_router(),
-            http_client: reqwest::Client::new(),
-        }
+            opensearch_client,
+        })
     }
 
     fn _create_resource_text(&self, uri: &str, name: &str) -> Resource {
@@ -86,7 +89,7 @@ impl DataCommonsTools {
         let search_result = SearchResult {
             total_found: 8292030,
             hits: vec![SearchHit {
-                id: "9x6qrJgBTkyZK1Kx4HAB".to_string(),
+                id: "9x6qrJgBTkyZK1Kx4HAC".to_string(),
                 title: "JupyterLab".to_string(),
                 description: "Notebooks".to_string(),
                 // doi: Some("10.5281/zenodo.427542".to_string()),
@@ -121,31 +124,15 @@ impl DataCommonsTools {
                 }
             }
         });
+
         let response = self
-            .http_client
-            .post(OPENSEARCH_URL)
-            .header("Content-Type", "application/json")
-            .json(&query_body)
+            .opensearch_client
+            .search(opensearch::SearchParts::Index(&["test_datacite"]))
+            .body(query_body)
             .send()
             .await;
         match response {
             Ok(resp) => {
-                if !resp.status().is_success() {
-                    let status = resp.status();
-                    let error_text = resp
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| "Unknown error".to_string());
-                    tracing::error!("OpenSearch error: {} - {}", status, error_text);
-                    return Err(McpError::internal_error(
-                        format!(
-                            "API Error: {} {}",
-                            status.as_u16(),
-                            status.canonical_reason().unwrap_or("Unknown")
-                        ),
-                        Some(json!({"status": status.as_u16(), "error": error_text})),
-                    ));
-                }
                 let resp_json = resp.json::<serde_json::Value>().await.map_err(|e| {
                     tracing::error!("Failed to parse OpenSearch response: {}", e);
                     McpError::internal_error(
@@ -157,6 +144,7 @@ impl DataCommonsTools {
                 // tracing::debug!("MCP OpenSearch JSON response: {resp_json:?}");
                 let empty_hits = vec![];
                 let hits_array = resp_json["hits"]["hits"].as_array().unwrap_or(&empty_hits);
+                // Convert OpenSearch hits to our own SearchHit struct
                 let hits: Vec<SearchHit> = hits_array
                     .iter()
                     .take(10)
