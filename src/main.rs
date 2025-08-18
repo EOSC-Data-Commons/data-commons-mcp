@@ -41,11 +41,7 @@ async fn main() -> AppResult<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
     let mcp_service = StreamableHttpService::new(
-        || {
-            DataCommonsTools::new().map_err(|e| {
-                std::io::Error::other(e.to_string())
-            })
-        },
+        || DataCommonsTools::new().map_err(|e| std::io::Error::other(e.to_string())),
         LocalSessionManager::default().into(),
         Default::default(),
     );
