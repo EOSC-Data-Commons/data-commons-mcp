@@ -299,6 +299,7 @@ impl SearchWorkflow {
                 let tool_result_text = tool_results
                     .content
                     .iter()
+                    .flat_map(|annotated_vec| annotated_vec.iter())
                     .filter_map(|annotated| match &annotated.raw {
                         rmcp::model::RawContent::Text(text_content) => {
                             Some(text_content.text.as_str())
