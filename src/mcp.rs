@@ -9,7 +9,6 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::env;
 use utoipa::ToSchema;
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -23,10 +22,9 @@ pub struct UserQuestion {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchResult {
     pub total_found: u64,
-    // pub query: String,
     pub hits: Vec<SearchHit>,
 }
-// "_id": "9x6qrJgBTkyZK1Kx4HAB"
+
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]
 pub struct SearchHit {
     #[schema(example = "9x6qrJgBTkyZK1Kx4HAB")]
@@ -35,8 +33,6 @@ pub struct SearchHit {
     pub title: String,
     #[schema(example = "Item Description")]
     pub description: String,
-    // #[schema(example = "10.48550/arXiv.2410.06062")]
-    // pub doi: Option<String>,
     #[schema(example = "2025-10-08")]
     pub publication_date: String,
     // #[schema(example = "['Information Retrieval, Data Science']")]
@@ -49,6 +45,8 @@ pub struct SearchHit {
     pub resource_type: String,
     #[schema(example = "0.5")]
     pub score: Option<f64>,
+    // #[schema(example = "10.48550/arXiv.2410.06062")]
+    // pub doi: Option<String>,
 }
 
 #[derive(Clone)]
@@ -59,15 +57,10 @@ pub struct DataCommonsTools {
 
 #[tool_router]
 impl DataCommonsTools {
-    #[allow(dead_code)]
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let opensearch_url =
-            env::var("OPENSEARCH_URL").unwrap_or_else(|_| "http://127.0.0.1:9200".to_string());
-        let transport = Transport::single_node(&opensearch_url)?;
-        let opensearch_client = OpenSearch::new(transport);
+    pub fn new(opensearch_url: &str) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             tool_router: Self::tool_router(),
-            opensearch_client,
+            opensearch_client: OpenSearch::new(Transport::single_node(opensearch_url)?),
         })
     }
 
@@ -75,47 +68,12 @@ impl DataCommonsTools {
         RawResource::new(uri, name.to_string()).no_annotation()
     }
 
-    // TODO: search_citations
-    // #[tool(description = "Search citations related to datasets or tools relevant to the user question")]
-    // async fn search_citations(
-
-    #[tool(description = "Search for tools relevant to the user question")]
-    async fn search_tool(
-        &self,
-        Parameters(UserQuestion {
-            question: _question,
-        }): Parameters<UserQuestion>,
-    ) -> Result<CallToolResult, McpError> {
-        // TODO: implement
-        let search_result = SearchResult {
-            total_found: 8292030,
-            hits: vec![SearchHit {
-                id: "9x6qrJgBTkyZK1Kx4HAC".to_string(),
-                title: "JupyterLab".to_string(),
-                description: "Notebooks".to_string(),
-                // doi: Some("10.5281/zenodo.427542".to_string()),
-                publication_date: "2016-08-29".to_string(),
-                keywords: Some(vec!["Data Science".to_string()]),
-                creators: Some(vec!["Lastname, Firstname".to_string()]),
-                url: "https://jupyter.org/".to_string(),
-                resource_type: "dataset".to_string(),
-                score: None,
-            }],
-        };
-        let json_content = serde_json::to_string_pretty(&search_result).map_err(|e| {
-            McpError::internal_error(
-                "Failed to serialize search results",
-                Some(json!({"error": e.to_string()})),
-            )
-        })?;
-        Ok(CallToolResult::success(vec![Content::text(json_content)]))
-    }
-
     #[tool(description = "Search for data relevant to the user question")]
     async fn search_data(
         &self,
         Parameters(UserQuestion { question }): Parameters<UserQuestion>,
     ) -> Result<CallToolResult, McpError> {
+        // Build the OpenSearch query here
         let query_body = json!({
             "query": {
                 "query_string": {
@@ -125,7 +83,7 @@ impl DataCommonsTools {
                 }
             }
         });
-
+        // Execute the OpenSearch request
         let response = self
             .opensearch_client
             .search(opensearch::SearchParts::Index(&["test_datacite"]))
@@ -217,6 +175,41 @@ impl DataCommonsTools {
             }
         }
     }
+
+    #[tool(description = "Search for tools relevant to the user question")]
+    async fn search_tool(
+        &self,
+        Parameters(UserQuestion {
+            question: _question,
+        }): Parameters<UserQuestion>,
+    ) -> Result<CallToolResult, McpError> {
+        // TODO: implement
+        let search_result = SearchResult {
+            total_found: 8292030,
+            hits: vec![SearchHit {
+                id: "9x6qrJgBTkyZK1Kx4HAC".to_string(),
+                title: "JupyterLab".to_string(),
+                description: "Notebooks".to_string(),
+                publication_date: "2016-08-29".to_string(),
+                keywords: Some(vec!["Data Science".to_string()]),
+                creators: Some(vec!["Lastname, Firstname".to_string()]),
+                url: "https://jupyter.org/".to_string(),
+                resource_type: "dataset".to_string(),
+                score: None,
+            }],
+        };
+        let json_content = serde_json::to_string_pretty(&search_result).map_err(|e| {
+            McpError::internal_error(
+                "Failed to serialize search results",
+                Some(json!({"error": e.to_string()})),
+            )
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(json_content)]))
+    }
+
+    // TODO: search_citations
+    // #[tool(description = "Search citations related to datasets or tools relevant to the user question")]
+    // async fn search_citations(
 }
 
 #[tool_handler]
