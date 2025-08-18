@@ -567,6 +567,7 @@ dependencies = [
  "async-stream",
  "axum 0.8.4",
  "axum-openapi3",
+ "clap",
  "futures-util",
  "llm",
  "opensearch",

@@ -47,16 +47,18 @@ MISTRAL_API_KEY = "YOUR_API_KEY"
 OPENAI_API_KEY = "YOUR_API_KEY"
 ```
 
-> [!CAUTION]
->
-> **Start and initialize the OpenSearch service** for datasets and tools using docker. See instructions at [EOSC-Data-Commons/metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse).
-
 ### ⚡️ Start dev server
 
 Start the **MCP server** in dev at http://localhost:8000/mcp, with OpenAPI UI at http://localhost:8000/docs
 
 ```sh
 cargo run
+```
+
+Customize server configuration through CLI arguments:
+
+```sh
+cargo run -- --mcp-only --opensearch-url http://localhost:9200
 ```
 
 Run and reload on change to the code:
