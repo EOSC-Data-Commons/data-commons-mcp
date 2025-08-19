@@ -1,3 +1,4 @@
+use axum::extract::State;
 use axum::response::sse;
 use axum::{
     extract::Json,
@@ -12,7 +13,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use utoipa::ToSchema;
 
 use llm::{
-    // FunctionCall, ToolCall,
     builder::{FunctionBuilder, LLMBackend, LLMBuilder},
     chat::{ChatMessage, StructuredOutputFormat},
 };
@@ -23,18 +23,19 @@ use rmcp::{
     transport::StreamableHttpClientTransport,
 };
 
+use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::mcp::{SearchHit, SearchResult};
 
-pub const ADDRESS: &str = "0.0.0.0:8000";
 const SYSTEM_PROMPT_TOOLS: &str = "You are an assistant that help users find datasets and tools for scientific research. Define if you need to use one of the tool provided to get more context to answer the user request.";
 const SYSTEM_PROMPT_RESOLUTION: &str = "You are an assistant that help users find datasets and tools for scientific research. Given the user question and datasets retrieved from the search API, summarize the findings in 1 sentence, extract which datasets might be the most interesting to answer the user question, and give them a relevance score between 0 and 1";
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct SearchInput {
     pub messages: Vec<ApiChatMessage>,
-    // #[schema(example = "mistral-small-latest")]
-    #[schema(example = "gpt-4.1-nano")]
+    // #[schema(example = "mistral/mistral-small-latest")]
+    // #[schema(example = "groq/moonshotai/kimi-k2-instruct")]
+    #[schema(example = "openai/gpt-4.1-nano")]
     pub model: String,
     #[serde(default)]
     pub stream: bool,
@@ -185,18 +186,19 @@ pub struct SearchWorkflow {
         rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>,
     pub llm_backend: LLMBackend,
     pub llm_api_key: String,
-    pub model: String,
+    pub llm_model: String,
     pub msg_id: String,
     pub created: u64,
 }
-
+// args.bind_address
 impl SearchWorkflow {
-    /// Initialize a new search workflow
-    pub async fn new(model: String) -> AppResult<Self> {
+    /// Initialize a new search workflow (query LLM with MCP tools)
+    pub async fn new(model: String, bind_address: String) -> AppResult<Self> {
         let created = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let msg_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
-        // Connect to MCP server
-        let transport = StreamableHttpClientTransport::from_uri(format!("http://{ADDRESS}/mcp"));
+        // Use bind_address for MCP connection
+        let transport =
+            StreamableHttpClientTransport::from_uri(format!("http://{bind_address}/mcp"));
         let client_info = ClientInfo {
             protocol_version: Default::default(),
             capabilities: ClientCapabilities::default(),
@@ -214,12 +216,13 @@ impl SearchWorkflow {
                 )));
             }
         };
-        let (llm_backend, llm_api_key) = get_llm_config().map_err(AppError::Llm)?;
+        let (llm_backend, llm_api_key, llm_model) =
+            get_llm_config(&model).map_err(AppError::Llm)?;
         Ok(Self {
             mcp_client: client,
             llm_backend,
             llm_api_key,
-            model,
+            llm_model,
             msg_id,
             created,
         })
@@ -238,7 +241,7 @@ impl SearchWorkflow {
         let mut llm_builder = LLMBuilder::new()
             .backend(self.llm_backend.clone())
             .api_key(&self.llm_api_key)
-            .model(&self.model)
+            .model(&self.llm_model)
             .max_tokens(1024)
             .temperature(0.1)
             .stream(false)
@@ -369,14 +372,14 @@ impl SearchWorkflow {
         // Convert messages and add formatted context
         let mut chat_messages: Vec<ChatMessage> =
             messages.iter().map(|msg| msg.to_chat_message()).collect();
-        chat_messages.push(ChatMessage::assistant().content(&formatted_context).build());
+        chat_messages.push(ChatMessage::user().content(&formatted_context).build());
 
         // Create LLM client with structured output schema
         let schema: StructuredOutputFormat = serde_json::from_str(SEARCH_OUTPUT_SCHEMA)?;
         let llm_resolution = LLMBuilder::new()
             .backend(self.llm_backend.clone())
             .api_key(&self.llm_api_key)
-            .model(&self.model)
+            .model(&self.llm_model)
             .max_tokens(512)
             .temperature(0.1)
             .stream(false)
@@ -454,7 +457,7 @@ impl SearchWorkflow {
             id: self.msg_id.clone(),
             object: "chat.completion.chunk".to_string(),
             created: self.created,
-            model: self.model.clone(),
+            model: self.llm_model.clone(),
             choices: vec![StreamChoice {
                 index: 0,
                 delta: StreamDelta {
@@ -482,7 +485,7 @@ impl SearchWorkflow {
     ) {
         let search_log = SearchLog::new(
             self.msg_id.clone(),
-            self.model.clone(),
+            self.llm_model.clone(),
             stream,
             conversation,
             response,
@@ -534,19 +537,50 @@ const SEARCH_OUTPUT_SCHEMA: &str = r#"
 
 /// Determines the LLM backend and API key based on available environment variables
 /// OpenAI takes priority if both are available
-fn get_llm_config() -> Result<(LLMBackend, String), String> {
-    if std::env::var("OPENAI_API_KEY").is_ok() {
-        match std::env::var("OPENAI_API_KEY") {
-            Ok(key) => Ok((LLMBackend::OpenAI, key)),
-            Err(_) => Err("OPENAI_API_KEY environment variable not set".to_string()),
+fn get_llm_config(model: &str) -> Result<(LLMBackend, String, String), String> {
+    // Parse provider/model_name from input
+    let parts: Vec<&str> = model.splitn(2, '/').collect();
+    let (provider, model_name) = match parts.as_slice() {
+        [provider, model_name] => (provider.to_string(), model_name.to_string()),
+        [single] => (single.to_string(), single.to_string()),
+        _ => ("openai".to_string(), model.to_string()), // fallback
+    };
+    let backend_result = match provider.as_str() {
+        "openai" => {
+            if std::env::var("OPENAI_API_KEY").is_ok() {
+                match std::env::var("OPENAI_API_KEY") {
+                    Ok(key) => Ok((LLMBackend::OpenAI, key)),
+                    Err(_) => Err("OPENAI_API_KEY environment variable not set".to_string()),
+                }
+            } else {
+                Err("OPENAI_API_KEY environment variable not set".to_string())
+            }
         }
-    } else if std::env::var("MISTRAL_API_KEY").is_ok() {
-        match std::env::var("MISTRAL_API_KEY") {
-            Ok(key) => Ok((LLMBackend::Mistral, key)),
-            Err(_) => Err("MISTRAL_API_KEY environment variable not set".to_string()),
+        "mistral" => {
+            if std::env::var("MISTRAL_API_KEY").is_ok() {
+                match std::env::var("MISTRAL_API_KEY") {
+                    Ok(key) => Ok((LLMBackend::Mistral, key)),
+                    Err(_) => Err("MISTRAL_API_KEY environment variable not set".to_string()),
+                }
+            } else {
+                Err("MISTRAL_API_KEY environment variable not set".to_string())
+            }
         }
-    } else {
-        Err("No LLM API key found. Please set either OPENAI_API_KEY or MISTRAL_API_KEY environment variable".to_string())
+        "groq" => {
+            if std::env::var("GROQ_API_KEY").is_ok() {
+                match std::env::var("GROQ_API_KEY") {
+                    Ok(key) => Ok((LLMBackend::Groq, key)),
+                    Err(_) => Err("GROQ_API_KEY environment variable not set".to_string()),
+                }
+            } else {
+                Err("GROQ_API_KEY environment variable not set".to_string())
+            }
+        }
+        _ => Err(format!("Unknown provider: {provider}")),
+    };
+    match backend_result {
+        Ok((backend, api_key)) => Ok((backend, api_key, model_name)),
+        Err(e) => Err(e),
     }
 }
 
@@ -561,18 +595,28 @@ fn get_llm_config() -> Result<(LLMBackend, String), String> {
         (status = 500, description = "Internal server error")
     ),
 )]
-pub async fn search_handler(headers: HeaderMap, Json(resp): Json<SearchInput>) -> Response {
+pub async fn search_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(resp): Json<SearchInput>,
+) -> Response {
     if resp.stream {
-        streaming_search_handler(headers, resp)
+        streaming_search_handler(headers, resp, state)
             .await
             .into_response()
     } else {
-        regular_search_handler(headers, resp).await.into_response()
+        regular_search_handler(headers, resp, state)
+            .await
+            .into_response()
     }
 }
 
 /// Streaming search handler for SSE responses
-async fn streaming_search_handler(headers: HeaderMap, resp: SearchInput) -> impl IntoResponse {
+async fn streaming_search_handler(
+    headers: HeaderMap,
+    resp: SearchInput,
+    state: AppState,
+) -> impl IntoResponse {
     // Validate API key only if SEARCH_API_KEY is set
     if let Ok(secret_key) = std::env::var("SEARCH_API_KEY") {
         let auth_header = headers.get("authorization");
@@ -585,7 +629,7 @@ async fn streaming_search_handler(headers: HeaderMap, resp: SearchInput) -> impl
                 .into_response();
         }
     }
-    let stream = create_search_stream(resp);
+    let stream = create_search_stream(resp, state);
     Sse::new(stream)
         // .keep_alive(
         //     sse::KeepAlive::new()
@@ -605,11 +649,14 @@ fn send_error_event(error_message: &str) -> AppResult<sse::Event> {
 }
 
 /// Create a streaming search response
-fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::Event>> {
+fn create_search_stream(
+    resp: SearchInput,
+    state: AppState,
+) -> impl Stream<Item = AppResult<sse::Event>> {
     async_stream::stream! {
         let start_time = SystemTime::now();
         // Initialize the workflow
-        let workflow = match SearchWorkflow::new(resp.model.clone()).await {
+        let workflow = match SearchWorkflow::new(resp.model.clone(), state.bind_address.clone()).await {
             Ok(workflow) => workflow,
             Err(e) => {
                 tracing::error!("Failed to initialize workflow: {:?}", e);
@@ -690,7 +737,11 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::
 }
 
 /// Search handler for non-streaming responses
-async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl IntoResponse {
+async fn regular_search_handler(
+    headers: HeaderMap,
+    resp: SearchInput,
+    state: AppState,
+) -> impl IntoResponse {
     let start_time = SystemTime::now();
     // Validate API key only if SEARCH_API_KEY is set
     if let Ok(secret_key) = std::env::var("SEARCH_API_KEY") {
@@ -704,7 +755,7 @@ async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl I
         }
     }
     // Initialize the workflow
-    let workflow = match SearchWorkflow::new(resp.model.clone()).await {
+    let workflow = match SearchWorkflow::new(resp.model.clone(), state.bind_address.clone()).await {
         Ok(workflow) => workflow,
         Err(e) => {
             tracing::error!("Failed to initialize workflow: {:?}", e);
@@ -751,12 +802,13 @@ async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl I
     {
         Ok(response) => response,
         Err(e) => {
-            tracing::error!("LLM processing failed: {:?}", e);
+            tracing::error!("LLM processing failed: {e:?}");
             // Fallback response without scoring
             SearchResponse {
                 hits: vec![],
-                summary: "Found datasets for your query, but could not process relevance scores."
-                    .to_string(),
+                summary: format!(
+                    "Found datasets for your query, but could not process relevance scores. {e:?}"
+                ),
             }
         }
     };
