@@ -67,11 +67,19 @@ Run and reload on change to the code:
 cargo watch -x run
 ```
 
+> [!NOTE]
+>
 > Example `curl` request:
 >
 > ```sh
-> curl -X POST http://localhost:8000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "data about insulin in EU"}], "model": "mistral-small-latest", "stream": true}'
+> curl -X POST http://localhost:8000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "data about insulin in EU"}], "model": "mistral/mistral-small-latest", "stream": true}'
 > ```
+>
+> Recommended model per provider: 
+>
+> - `openai/gpt-4.1`
+> - `mistral/mistral-large-latest`
+> - `groq/moonshotai/kimi-k2-instruct`
 
 ### 🔌 Connect MCP client
 

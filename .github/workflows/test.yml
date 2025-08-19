@@ -18,6 +18,9 @@ jobs:
       - run: cargo clippy --all --all-targets --all-features
       - run: cargo deny check
       - run: cargo build --release
+      # - run: cargo test
+      #   env:
+      #     MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
   docker:
     name: 🐳 Docker
