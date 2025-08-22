@@ -1,3 +1,4 @@
+use axum::extract::State;
 use axum::response::sse;
 use axum::{
     extract::Json,
@@ -6,13 +7,10 @@ use axum::{
 };
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 use utoipa::ToSchema;
 
 use llm::{
-    // FunctionCall, ToolCall,
     builder::{FunctionBuilder, LLMBackend, LLMBuilder},
     chat::{ChatMessage, StructuredOutputFormat},
 };
@@ -23,18 +21,25 @@ use rmcp::{
     transport::StreamableHttpClientTransport,
 };
 
+use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::mcp::{SearchHit, SearchResult};
+use crate::utils::{get_llm_config, SearchLog};
 
-pub const ADDRESS: &str = "0.0.0.0:8000";
-const SYSTEM_PROMPT_TOOLS: &str = "You are an assistant that help users find datasets and tools for scientific research. Define if you need to use one of the tool provided to get more context to answer the user request.";
-const SYSTEM_PROMPT_RESOLUTION: &str = "You are an assistant that help users find datasets and tools for scientific research. Given the user question and datasets retrieved from the search API, summarize the findings in 1 sentence, extract which datasets might be the most interesting to answer the user question, and give them a relevance score between 0 and 1";
+const SYSTEM_PROMPT_TOOLS: &str = r#"You are an assistant that help users find datasets and tools for scientific research.
+Define if you need to use one of the tool provided to get more context to answer the user request, or directly answer the user question.
+"#;
+const SYSTEM_PROMPT_RESOLUTION: &str = r#"You are an assistant that help users find datasets and tools for scientific research.
+Given the user question and datasets retrieved from the search API, summarize the findings in 1 sentence,
+extract which datasets might be the most interesting to answer the user question, and give them a relevance score between 0 and 1
+"#;
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct SearchInput {
     pub messages: Vec<ApiChatMessage>,
-    // #[schema(example = "mistral-small-latest")]
-    #[schema(example = "gpt-4.1-nano")]
+    // #[schema(example = "groq/moonshotai/kimi-k2-instruct")]
+    // #[schema(example = "openai/gpt-4.1-nano")]
+    #[schema(example = "mistral/mistral-small-latest")]
     pub model: String,
     #[serde(default)]
     pub stream: bool,
@@ -62,7 +67,8 @@ pub struct ApiChatMessage {
     #[schema(example = "user")]
     pub role: String,
     #[schema(
-        example = "I am looking for data about glucose level evolution in liver on people with type 1 diabetes in Europe between 1980 and 2020"
+        example = "insulin"
+        // example = "I am looking for data about glucose level evolution in liver on people with type 1 diabetes in Europe between 1980 and 2020"
     )]
     pub content: String,
 }
@@ -76,19 +82,17 @@ impl ApiChatMessage {
             _ => ChatMessage::assistant().content(&self.content).build(), // Default to assistant
         }
     }
-
-    /// Create from role and content
-    pub fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
-        Self {
-            role: role.into(),
-            content: content.into(),
-        }
-    }
-
-    /// Create an assistant message
-    pub fn assistant(content: impl Into<String>) -> Self {
-        Self::new("assistant", content)
-    }
+    // /// Create from role and content
+    // pub fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
+    //     Self {
+    //         role: role.into(),
+    //         content: content.into(),
+    //     }
+    // }
+    // /// Create an assistant message
+    // pub fn assistant(content: impl Into<String>) -> Self {
+    //     Self::new("assistant", content)
+    // }
 }
 
 /// OpenAI-compatible streaming response chunk
@@ -119,65 +123,13 @@ struct StreamDelta {
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 struct LLMStructuredOutput {
     summary: String,
-    datasets: Vec<LLMDataset>,
+    hits: Vec<ScoredHits>,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
-struct LLMDataset {
-    doi: String,
+struct ScoredHits {
+    url: String,
     score: f64,
-}
-
-/// Structure for logging search conversations and responses
-#[derive(Debug, Serialize)]
-struct SearchLog {
-    timestamp: String,
-    request_id: String,
-    model: String,
-    stream: bool,
-    conversation: Vec<ApiChatMessage>,
-    response: SearchResponse,
-    execution_time_ms: u64,
-}
-
-impl SearchLog {
-    fn new(
-        request_id: String,
-        model: String,
-        stream: bool,
-        conversation: Vec<ApiChatMessage>,
-        response: SearchResponse,
-        execution_time_ms: u64,
-    ) -> Self {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let timestamp = format!("{timestamp}");
-        Self {
-            timestamp,
-            request_id,
-            model,
-            stream,
-            conversation,
-            response,
-            execution_time_ms,
-        }
-    }
-
-    /// Write the log entry to the search.log file
-    fn write_to_file(&self) -> AppResult<()> {
-        let log_entry = serde_json::to_string(self)?;
-        let log_path = "data/search.log";
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_path)
-            .map_err(|e| AppError::Llm(format!("Failed to open log file: {e}")))?;
-        writeln!(file, "{log_entry}")
-            .map_err(|e| AppError::Llm(format!("Failed to write to log file: {e}")))?;
-        Ok(())
-    }
 }
 
 /// Workflow manager for handling search operations with fragmented steps
@@ -186,18 +138,19 @@ pub struct SearchWorkflow {
         rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>,
     pub llm_backend: LLMBackend,
     pub llm_api_key: String,
-    pub model: String,
+    pub llm_model: String,
     pub msg_id: String,
     pub created: u64,
 }
-
+// args.bind_address
 impl SearchWorkflow {
-    /// Initialize a new search workflow
-    pub async fn new(model: String) -> AppResult<Self> {
+    /// Initialize a new search workflow (query LLM with MCP tools)
+    pub async fn new(model: String, bind_address: String) -> AppResult<Self> {
         let created = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let msg_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
-        // Connect to MCP server
-        let transport = StreamableHttpClientTransport::from_uri(format!("http://{ADDRESS}/mcp"));
+        // Use bind_address for MCP connection
+        let transport =
+            StreamableHttpClientTransport::from_uri(format!("http://{bind_address}/mcp"));
         let client_info = ClientInfo {
             protocol_version: Default::default(),
             capabilities: ClientCapabilities::default(),
@@ -215,12 +168,13 @@ impl SearchWorkflow {
                 )));
             }
         };
-        let (llm_backend, llm_api_key) = get_llm_config().map_err(AppError::Llm)?;
+        let (llm_backend, llm_api_key, llm_model) =
+            get_llm_config(&model).map_err(AppError::Llm)?;
         Ok(Self {
             mcp_client: client,
             llm_backend,
             llm_api_key,
-            model,
+            llm_model,
             msg_id,
             created,
         })
@@ -230,7 +184,7 @@ impl SearchWorkflow {
     pub async fn execute_tool_calls(
         &self,
         messages: &[ApiChatMessage],
-    ) -> AppResult<(Option<Vec<llm::ToolCall>>, SearchResult)> {
+    ) -> AppResult<(String, Option<Vec<llm::ToolCall>>, SearchResult)> {
         // Convert messages to LLM ChatMessage format
         let chat_messages: Vec<ChatMessage> =
             messages.iter().map(|msg| msg.to_chat_message()).collect();
@@ -239,7 +193,7 @@ impl SearchWorkflow {
         let mut llm_builder = LLMBuilder::new()
             .backend(self.llm_backend.clone())
             .api_key(&self.llm_api_key)
-            .model(&self.model)
+            .model(&self.llm_model)
             .max_tokens(1024)
             .temperature(0.1)
             .stream(false)
@@ -257,7 +211,7 @@ impl SearchWorkflow {
         let llm = llm_builder.build().expect("Failed to build LLM client");
 
         // Query the LLM to check if tool call necessary
-        let (_response_text, tool_calls) =
+        let (response_text, tool_calls) =
             match llm.chat_with_tools(&chat_messages, llm.tools()).await {
                 Ok(response) => {
                     tracing::debug!("LLM tool call response: {response:#?}");
@@ -300,6 +254,7 @@ impl SearchWorkflow {
                 let tool_result_text = tool_results
                     .content
                     .iter()
+                    .flat_map(|annotated_vec| annotated_vec.iter())
                     .filter_map(|annotated| match &annotated.raw {
                         rmcp::model::RawContent::Text(text_content) => {
                             Some(text_content.text.as_str())
@@ -325,7 +280,7 @@ impl SearchWorkflow {
             }
         }
 
-        Ok((tool_calls, search_results))
+        Ok((response_text, tool_calls, search_results))
     }
 
     /// Step 2: Generate summary and scores using LLM with structured output, then create final response
@@ -351,10 +306,7 @@ impl SearchWorkflow {
         );
         for (i, dataset) in search_results.hits.iter().enumerate() {
             formatted_context.push_str(&format!("{}. **{}**\n", i + 1, dataset.title));
-            if let Some(doi) = &dataset.doi {
-                formatted_context.push_str(&format!("   DOI: https://doi.org/{doi}\n"));
-            }
-            formatted_context.push_str(&format!("   Zenodo: {}\n", dataset.zenodo_url));
+            formatted_context.push_str(&format!("   Zenodo: {}\n", dataset.url));
             formatted_context.push_str(&format!("   Published: {}\n", dataset.publication_date));
             if let Some(creators) = &dataset.creators {
                 if !creators.is_empty() {
@@ -372,14 +324,14 @@ impl SearchWorkflow {
         // Convert messages and add formatted context
         let mut chat_messages: Vec<ChatMessage> =
             messages.iter().map(|msg| msg.to_chat_message()).collect();
-        chat_messages.push(ChatMessage::assistant().content(&formatted_context).build());
+        chat_messages.push(ChatMessage::user().content(&formatted_context).build());
 
         // Create LLM client with structured output schema
         let schema: StructuredOutputFormat = serde_json::from_str(SEARCH_OUTPUT_SCHEMA)?;
         let llm_resolution = LLMBuilder::new()
             .backend(self.llm_backend.clone())
             .api_key(&self.llm_api_key)
-            .model(&self.model)
+            .model(&self.llm_model)
             .max_tokens(512)
             .temperature(0.1)
             .stream(false)
@@ -406,26 +358,18 @@ impl SearchWorkflow {
             }
         };
 
-        // Create a lookup map for LLM scores by DOI
+        // Create a lookup map for LLM scores by URL
         let score_lookup: std::collections::HashMap<String, f64> = llm_response
-            .datasets
+            .hits
             .into_iter()
-            .map(|llm_dataset| (llm_dataset.doi, llm_dataset.score))
+            .map(|llm_dataset| (llm_dataset.url, llm_dataset.score))
             .collect();
 
-        // Clone search results to make it mutable for scoring
         let mut search_results = search_results;
-
         // Add scores to all datasets from search results
         for hit in &mut search_results.hits {
-            if let Some(doi) = &hit.doi {
-                let doi_url = format!("https://doi.org/{doi}");
-                hit.score = Some(score_lookup.get(&doi_url).copied().unwrap_or(0.0));
-            } else {
-                hit.score = Some(0.0);
-            }
+            hit.score = Some(score_lookup.get(&hit.url).copied().unwrap_or(0.0));
         }
-
         // Sort hits by score in descending order (highest score first)
         search_results.hits.sort_by(|a, b| {
             let score_a = a.score.unwrap_or(0.0);
@@ -462,7 +406,7 @@ impl SearchWorkflow {
             id: self.msg_id.clone(),
             object: "chat.completion.chunk".to_string(),
             created: self.created,
-            model: self.model.clone(),
+            model: self.llm_model.clone(),
             choices: vec![StreamChoice {
                 index: 0,
                 delta: StreamDelta {
@@ -480,8 +424,8 @@ impl SearchWorkflow {
         Ok(sse::Event::default().data(serde_json::to_string(&chunk)?))
     }
 
-    /// Log search operation with execution time
-    pub fn log_search_operation(
+    /// Log search operation response with execution time
+    pub fn log_response(
         &self,
         stream: bool,
         conversation: Vec<ApiChatMessage>,
@@ -490,7 +434,7 @@ impl SearchWorkflow {
     ) {
         let search_log = SearchLog::new(
             self.msg_id.clone(),
-            self.model.clone(),
+            self.llm_model.clone(),
             stream,
             conversation,
             response,
@@ -513,50 +457,32 @@ const SEARCH_OUTPUT_SCHEMA: &str = r#"
                     "type": "string",
                     "description": "Summary of the findings in 1 sentence"
                 },
-                "datasets": {
+                "hits": {
                     "type": "array",
-                    "description": "List of most relevant datasets",
+                    "description": "List of most relevant hits",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "doi": {
+                            "url": {
                                 "type": "string",
-                                "description": "Digital Object Identifier of the dataset"
+                                "description": "URL of the item"
                             },
                             "score": {
                                 "type": "number",
-                                "description": "Relevance score of the dataset based on the search query (between 0 and 1)"
+                                "description": "Relevance score of the hit based on the search query (between 0 and 1)"
                             }
                         },
                         "additionalProperties": false,
-                        "required": ["doi", "score"]
+                        "required": ["url", "score"]
                     }
                 }
             },
             "additionalProperties": false,
-            "required": ["summary", "datasets"]
+            "required": ["summary", "hits"]
         },
         "strict": true
     }
 "#;
-
-/// Determines the LLM backend and API key based on available environment variables
-/// OpenAI takes priority if both are available
-fn get_llm_config() -> Result<(LLMBackend, String), String> {
-    if std::env::var("OPENAI_API_KEY").is_ok() {
-        match std::env::var("OPENAI_API_KEY") {
-            Ok(key) => Ok((LLMBackend::OpenAI, key)),
-            Err(_) => Err("OPENAI_API_KEY environment variable not set".to_string()),
-        }
-    } else if std::env::var("MISTRAL_API_KEY").is_ok() {
-        match std::env::var("MISTRAL_API_KEY") {
-            Ok(key) => Ok((LLMBackend::Mistral, key)),
-            Err(_) => Err("MISTRAL_API_KEY environment variable not set".to_string()),
-        }
-    } else {
-        Err("No LLM API key found. Please set either OPENAI_API_KEY or MISTRAL_API_KEY environment variable".to_string())
-    }
-}
 
 /// Search data relevant to a user question in a conversation
 #[utoipa::path(
@@ -569,18 +495,28 @@ fn get_llm_config() -> Result<(LLMBackend, String), String> {
         (status = 500, description = "Internal server error")
     ),
 )]
-pub async fn search_handler(headers: HeaderMap, Json(resp): Json<SearchInput>) -> Response {
+pub async fn search_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(resp): Json<SearchInput>,
+) -> Response {
     if resp.stream {
-        streaming_search_handler(headers, resp)
+        streaming_search_handler(headers, resp, state)
             .await
             .into_response()
     } else {
-        regular_search_handler(headers, resp).await.into_response()
+        regular_search_handler(headers, resp, state)
+            .await
+            .into_response()
     }
 }
 
 /// Streaming search handler for SSE responses
-async fn streaming_search_handler(headers: HeaderMap, resp: SearchInput) -> impl IntoResponse {
+async fn streaming_search_handler(
+    headers: HeaderMap,
+    resp: SearchInput,
+    state: AppState,
+) -> impl IntoResponse {
     // Validate API key only if SEARCH_API_KEY is set
     if let Ok(secret_key) = std::env::var("SEARCH_API_KEY") {
         let auth_header = headers.get("authorization");
@@ -593,7 +529,7 @@ async fn streaming_search_handler(headers: HeaderMap, resp: SearchInput) -> impl
                 .into_response();
         }
     }
-    let stream = create_search_stream(resp);
+    let stream = create_search_stream(resp, state);
     Sse::new(stream)
         // .keep_alive(
         //     sse::KeepAlive::new()
@@ -610,31 +546,17 @@ fn send_error_event(error_message: &str) -> AppResult<sse::Event> {
         .data(serde_json::to_string(&serde_json::json!({
             "error": error_message.to_string(),
         }))?))
-    // sse::Event::default().data(
-    //     serde_json::to_string(&StreamChunk {
-    //         id: msg_id.to_string(),
-    //         object: "chat.completion.chunk".to_string(),
-    //         created,
-    //         model: model.to_string(),
-    //         choices: vec![StreamChoice {
-    //             index: 0,
-    //             delta: StreamDelta {
-    //                 role: Some("assistant".to_string()),
-    //                 content: Some(error_message.to_string()),
-    //                 function_call: None,
-    //             },
-    //             finish_reason: Some(finish_reason.to_string()),
-    //         }],
-    //     })?,
-    // )
 }
 
 /// Create a streaming search response
-fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::Event>> {
+fn create_search_stream(
+    resp: SearchInput,
+    state: AppState,
+) -> impl Stream<Item = AppResult<sse::Event>> {
     async_stream::stream! {
         let start_time = SystemTime::now();
         // Initialize the workflow
-        let workflow = match SearchWorkflow::new(resp.model.clone()).await {
+        let workflow = match SearchWorkflow::new(resp.model.clone(), state.bind_address.clone()).await {
             Ok(workflow) => workflow,
             Err(e) => {
                 tracing::error!("Failed to initialize workflow: {:?}", e);
@@ -643,7 +565,7 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::
             }
         };
         // Step 1: Execute tool calls if needed
-        let (tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
+        let (response_txt, tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Tool call execution failed: {:?}", e);
@@ -660,27 +582,25 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::
                 // Direct response without tool calls
                 let response = SearchResponse {
                     hits: vec![],
-                    summary: "I can help you find datasets and tools for scientific research. Please provide more specific details about what you're looking for.".to_string(),
+                    summary: response_txt,
                 };
-                // Log the search
-                workflow.log_search_operation(
+                yield Ok(workflow.create_stream_chunk(
+                    Some(response.summary.clone()),
+                    Some("stop".to_string())
+                )?);
+                workflow.log_response(
                     resp.stream,
                     resp.messages.clone(),
                     response,
                     execution_time,
                 );
-                yield Ok(workflow.create_stream_chunk(
-                    Some("I can help you find datasets and tools for scientific research. Please provide more specific details about what you're looking for.".to_string()),
-                    Some("stop".to_string())
-                )?);
             } else {
                 // No results found
                 let response = SearchResponse {
                     hits: vec![],
                     summary: "Nothing found for your query.".to_string(),
                 };
-                // Log the search
-                workflow.log_search_operation(
+                workflow.log_response(
                     resp.stream,
                     resp.messages.clone(),
                     response,
@@ -690,11 +610,10 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::
             }
             return;
         }
-
         // Stream the tool results (without scores or summary)
         yield Ok(workflow.create_sse_event("tool_call_result", &search_results)?);
 
-        // Step 2: Generate summary and scores using LLM
+        // Step 2: Generate and stream summary and scores using LLM
         let final_response = match workflow.generate_summary_and_scores(&resp.messages, search_results).await {
             Ok(response) => response,
             Err(_) => {
@@ -703,26 +622,26 @@ fn create_search_stream(resp: SearchInput) -> impl Stream<Item = AppResult<sse::
                 return;
             }
         };
-
-        // Stream the final search response
         yield Ok(workflow.create_sse_event("search_response", &final_response)?);
 
-        // Calculate execution time and log the search
+        // Calculate execution time and log the search resp
         let execution_time = start_time.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
-        workflow.log_search_operation(
+        workflow.log_response(
             resp.stream,
             resp.messages.clone(),
             final_response,
             execution_time,
         );
-
-        // Final stop chunk
         yield Ok(workflow.create_stream_chunk(None, Some("stop".to_string()))?);
     }
 }
 
 /// Search handler for non-streaming responses
-async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl IntoResponse {
+async fn regular_search_handler(
+    headers: HeaderMap,
+    resp: SearchInput,
+    state: AppState,
+) -> impl IntoResponse {
     let start_time = SystemTime::now();
     // Validate API key only if SEARCH_API_KEY is set
     if let Ok(secret_key) = std::env::var("SEARCH_API_KEY") {
@@ -735,9 +654,8 @@ async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl I
             );
         }
     }
-
     // Initialize the workflow
-    let workflow = match SearchWorkflow::new(resp.model.clone()).await {
+    let workflow = match SearchWorkflow::new(resp.model.clone(), state.bind_address.clone()).await {
         Ok(workflow) => workflow,
         Err(e) => {
             tracing::error!("Failed to initialize workflow: {:?}", e);
@@ -747,9 +665,8 @@ async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl I
             );
         }
     };
-
     // Step 1: Execute tool calls if needed
-    let (_tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
+    let (_response_txt, _tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
         Ok(result) => result,
         Err(e) => {
             tracing::error!("Tool call execution failed: {:?}", e);
@@ -759,22 +676,22 @@ async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl I
             );
         }
     };
-
     // If no datasets were found, return early
     if search_results.total_found == 0 || search_results.hits.is_empty() {
-        let execution_time = start_time.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
+        let execution_time = start_time
+            .elapsed()
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
         let final_response = SearchResponse {
             hits: vec![],
             summary: "No datasets found for your query.".to_string(),
         };
-        // Log the search
-        workflow.log_search_operation(
+        workflow.log_response(
             resp.stream,
             resp.messages.clone(),
             final_response.clone(),
             execution_time,
         );
-
         return (StatusCode::OK, Json(serde_json::json!(final_response)));
     }
 
@@ -785,18 +702,22 @@ async fn regular_search_handler(headers: HeaderMap, resp: SearchInput) -> impl I
     {
         Ok(response) => response,
         Err(e) => {
-            tracing::error!("LLM processing failed: {:?}", e);
+            tracing::error!("LLM processing failed: {e:?}");
             // Fallback response without scoring
             SearchResponse {
                 hits: vec![],
-                summary: "Found datasets for your query, but could not process relevance scores.".to_string(),
+                summary: format!(
+                    "Found datasets for your query, but could not process relevance scores. {e:?}"
+                ),
             }
         }
     };
-
     // Calculate execution time and log the search
-    let execution_time = start_time.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
-    workflow.log_search_operation(
+    let execution_time = start_time
+        .elapsed()
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    workflow.log_response(
         resp.stream,
         resp.messages.clone(),
         final_response.clone(),

@@ -1,3 +1,4 @@
+use opensearch::{OpenSearch, http::transport::Transport};
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, tool::Parameters},
@@ -21,20 +22,17 @@ pub struct UserQuestion {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchResult {
     pub total_found: u64,
-    // pub query: String,
     pub hits: Vec<SearchHit>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]
 pub struct SearchHit {
-    #[schema(example = "5173026")]
-    pub id: u64,
+    #[schema(example = "9x6qrJgBTkyZK1Kx4HAB")]
+    pub id: String,
     #[schema(example = "Item Title")]
     pub title: String,
     #[schema(example = "Item Description")]
     pub description: String,
-    #[schema(example = "10.48550/arXiv.2410.06062")]
-    pub doi: Option<String>,
     #[schema(example = "2025-10-08")]
     pub publication_date: String,
     // #[schema(example = "['Information Retrieval, Data Science']")]
@@ -42,101 +40,196 @@ pub struct SearchHit {
     // #[schema(example = "['Emonet, Vincent']")]
     pub creators: Option<Vec<String>>,
     #[schema(example = "https://zenodo.org/record/5173026")]
-    pub zenodo_url: String,
+    pub url: String,
     #[schema(example = "dataset")]
     pub resource_type: String,
     #[schema(example = "0.5")]
     pub score: Option<f64>,
-}
-
-/// Represents a response from Zenodo API
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ZenodoResponse {
-    pub hits: ZenodoHits,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ZenodoHits {
-    pub total: u64,
-    pub hits: Vec<ZenodoRecord>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ZenodoRecord {
-    pub id: u64,
-    pub title: String,
-    pub description: Option<String>,
-    pub doi: Option<String>,
-    pub created: String,
-    pub modified: String,
-    #[serde(rename = "conceptdoi")]
-    pub concept_doi: Option<String>,
-    pub metadata: Option<ZenodoMetadata>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ZenodoMetadata {
-    pub title: String,
-    pub description: Option<String>,
-    pub creators: Option<Vec<ZenodoCreator>>,
-    pub publication_date: Option<String>,
-    pub keywords: Option<Vec<String>>,
-    pub subjects: Option<Vec<ZenodoSubject>>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ZenodoCreator {
-    pub name: Option<String>,
-    pub affiliation: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ZenodoSubject {
-    pub term: Option<String>,
-    pub identifier: Option<String>,
+    // #[schema(example = "10.48550/arXiv.2410.06062")]
+    // pub doi: Option<String>,
 }
 
 #[derive(Clone)]
 pub struct DataCommonsTools {
     tool_router: ToolRouter<DataCommonsTools>,
-    http_client: reqwest::Client,
+    opensearch_client: OpenSearch,
 }
 
 #[tool_router]
 impl DataCommonsTools {
-    #[allow(dead_code)]
-    pub fn new() -> Self {
-        Self {
+    pub fn new(opensearch_url: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
             tool_router: Self::tool_router(),
-            http_client: reqwest::Client::new(),
-        }
+            opensearch_client: OpenSearch::new(Transport::single_node(opensearch_url)?),
+        })
     }
 
     fn _create_resource_text(&self, uri: &str, name: &str) -> Resource {
         RawResource::new(uri, name.to_string()).no_annotation()
     }
 
-    // TODO: search_citations
-    // #[tool(description = "Search citations related to datasets or tools relevant to the user question")]
-    // async fn search_citations(
+    #[tool(description = "Search for data relevant to the user question")]
+    async fn search_data(
+        &self,
+        Parameters(UserQuestion { question }): Parameters<UserQuestion>,
+    ) -> Result<CallToolResult, McpError> {
+        // Build the OpenSearch query here
+        let query_body = json!({
+            "query": {
+                "query_string": {
+                    "default_operator": "AND",
+                    "default_field": "_all_fields",
+                    "query": question,
+                    // "query": format!("*{question}*"),
+                }
+            }
+        });
+        // let query_body = json!({
+        //     "query": {
+        //         "bool": {
+        //             "filter": [
+        //                 {"term": {"format": "CSV"}}
+        //             ],
+        //             "must": {
+        //                 "knn": {
+        //                     "embedding": {
+        //                         "vector": query_embedding,
+        //                         "k": 5
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // });
+        // Or nested field to have multiple embeddings per document
+        // {
+        //     "query": {
+        //         "nested": {
+        //             "path": "my_vectors",
+        //             "query": {
+        //                 "knn": {
+        //                     "my_vectors.vector": {
+        //                         "vector": [ ... ],
+        //                         "k": 10
+        //                     }
+        //                 }
+        //             },
+        //             "score_mode": "max"
+        //         }
+        //     }
+        // }
+
+        // Execute the OpenSearch request
+        let response = self
+            .opensearch_client
+            .search(opensearch::SearchParts::Index(&["test_datacite"]))
+            .body(query_body)
+            .send()
+            .await;
+        match response {
+            Ok(resp) => {
+                let resp_json = resp.json::<serde_json::Value>().await.map_err(|e| {
+                    tracing::error!("Failed to parse OpenSearch response: {}", e);
+                    McpError::internal_error(
+                        "Failed to parse OpenSearch response",
+                        Some(json!({"error": e.to_string()})),
+                    )
+                })?;
+                let total_found = resp_json["hits"]["total"]["value"].as_u64().unwrap_or(0);
+                // tracing::debug!("MCP OpenSearch JSON response: {resp_json:?}");
+                let empty_hits = vec![];
+                let hits_array = resp_json["hits"]["hits"].as_array().unwrap_or(&empty_hits);
+                // Convert OpenSearch hits to our own SearchHit struct
+                let hits: Vec<SearchHit> = hits_array
+                    .iter()
+                    .take(10)
+                    .map(|hit| {
+                        let source = &hit["_source"];
+                        let id = hit["_id"].as_str().unwrap_or("").to_string();
+                        let empty_titles = vec![];
+                        let titles = source["titles"].as_array().unwrap_or(&empty_titles);
+                        let title = titles
+                            .first()
+                            .and_then(|t| t["title"].as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let description = source["descriptions"]
+                            .as_array()
+                            .and_then(|arr| arr.first())
+                            .and_then(|d| d["description"].as_str())
+                            .map(|d| {
+                                if d.len() > 300 {
+                                    format!("{}...", &d[..300])
+                                } else {
+                                    d.to_string()
+                                }
+                            })
+                            .unwrap_or_else(|| "No description available".to_string());
+                        let publication_date =
+                            source["publicationYear"].as_str().unwrap_or("").to_string();
+                        let keywords = source["subjects"].as_array().map(|subjects| {
+                            subjects
+                                .iter()
+                                .filter_map(|s| s["subject"].as_str().map(|ss| ss.to_string()))
+                                .collect()
+                        });
+                        let creators = source["creators"].as_array().map(|creators| {
+                            creators
+                                .iter()
+                                .filter_map(|c| c["creatorName"].as_str().map(|n| n.to_string()))
+                                .collect()
+                        });
+                        SearchHit {
+                            id,
+                            title,
+                            description,
+                            publication_date,
+                            keywords,
+                            creators,
+                            url: source["url"].as_str().unwrap_or("").to_string(),
+                            resource_type: "dataset".to_string(),
+                            score: hit["_score"].as_f64(),
+                        }
+                    })
+                    .collect();
+                let search_result = SearchResult { total_found, hits };
+                let json_content = serde_json::to_string_pretty(&search_result).map_err(|e| {
+                    McpError::internal_error(
+                        "Failed to serialize search results",
+                        Some(json!({"error": e.to_string()})),
+                    )
+                })?;
+                // tracing::debug!("MCP search results: {json_content}");
+                Ok(CallToolResult::success(vec![Content::text(json_content)]))
+            }
+            Err(e) => {
+                tracing::error!("Failed to make request to OpenSearch: {}", e);
+                Err(McpError::internal_error(
+                    "Failed to connect to OpenSearch",
+                    Some(json!({"error": e.to_string()})),
+                ))
+            }
+        }
+    }
 
     #[tool(description = "Search for tools relevant to the user question")]
     async fn search_tool(
         &self,
-        Parameters(UserQuestion { question }): Parameters<UserQuestion>,
+        Parameters(UserQuestion {
+            question: _question,
+        }): Parameters<UserQuestion>,
     ) -> Result<CallToolResult, McpError> {
         // TODO: implement
         let search_result = SearchResult {
             total_found: 8292030,
             hits: vec![SearchHit {
-                id: 427542,
+                id: "9x6qrJgBTkyZK1Kx4HAC".to_string(),
                 title: "JupyterLab".to_string(),
                 description: "Notebooks".to_string(),
-                doi: Some("10.5281/zenodo.427542".to_string()),
                 publication_date: "2016-08-29".to_string(),
                 keywords: Some(vec!["Data Science".to_string()]),
                 creators: Some(vec!["Lastname, Firstname".to_string()]),
-                zenodo_url: "https://zenodo.org/record/427542".to_string(),
+                url: "https://jupyter.org/".to_string(),
                 resource_type: "dataset".to_string(),
                 score: None,
             }],
@@ -150,140 +243,9 @@ impl DataCommonsTools {
         Ok(CallToolResult::success(vec![Content::text(json_content)]))
     }
 
-    #[tool(description = "Search for data relevant to the user question")]
-    async fn search_data(
-        &self,
-        Parameters(UserQuestion { question }): Parameters<UserQuestion>,
-    ) -> Result<CallToolResult, McpError> {
-        // tracing::info!("User question: {}", question);
-        const ZENODO_API_URL: &str = "https://zenodo.org/api/records";
-        // Build query parameters
-        let mut params = vec![("q", question.as_str()), ("size", "10"), ("page", "1")];
-        // Add access token if available from environment
-        let access_token = std::env::var("ZENODO_ACCESS_TOKEN").ok();
-        if let Some(token) = &access_token {
-            params.push(("access_token", token.as_str()));
-        }
-        // Make the HTTP request
-        match self
-            .http_client
-            .get(ZENODO_API_URL)
-            .query(&params)
-            .send()
-            .await
-        {
-            Ok(response) => {
-                if !response.status().is_success() {
-                    let status = response.status();
-                    let error_text = response
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| "Unknown error".to_string());
-                    tracing::error!("Zenodo API error: {} - {}", status, error_text);
-                    return Err(McpError::internal_error(
-                        format!(
-                            "API Error: {} {}",
-                            status.as_u16(),
-                            status.canonical_reason().unwrap_or("Unknown")
-                        ),
-                        Some(json!({
-                            "status": status.as_u16(),
-                            "error": error_text
-                        })),
-                    ));
-                }
-                match response.json::<ZenodoResponse>().await {
-                    Ok(zenodo_data) => {
-                        let hits: Vec<SearchHit> = zenodo_data
-                            .hits
-                            .hits
-                            .iter()
-                            .take(10) // Limit to first 10 results
-                            .map(|record| {
-                                let title = record
-                                    .metadata
-                                    .as_ref()
-                                    .map(|m| &m.title)
-                                    .unwrap_or(&record.title)
-                                    .clone();
-                                let description = record
-                                    .metadata
-                                    .as_ref()
-                                    .and_then(|m| m.description.as_ref())
-                                    .or(record.description.as_ref())
-                                    .map(|d| {
-                                        // Truncate long descriptions
-                                        if d.len() > 300 {
-                                            format!("{}...", &d[..300])
-                                        } else {
-                                            d.to_string()
-                                        }
-                                    })
-                                    .unwrap_or_else(|| "No description available".to_string());
-                                let publication_date = record
-                                    .metadata
-                                    .as_ref()
-                                    .and_then(|m| m.publication_date.as_ref())
-                                    .unwrap_or(&record.created)
-                                    .clone();
-                                let keywords =
-                                    record.metadata.as_ref().and_then(|m| m.keywords.clone());
-                                let creators = record
-                                    .metadata
-                                    .as_ref()
-                                    .and_then(|m| m.creators.as_ref())
-                                    .map(|creators| {
-                                        creators.iter().filter_map(|c| c.name.clone()).collect()
-                                    });
-                                SearchHit {
-                                    id: record.id,
-                                    title,
-                                    description,
-                                    doi: record.doi.clone(),
-                                    publication_date,
-                                    keywords,
-                                    creators,
-                                    zenodo_url: format!("https://zenodo.org/record/{}", record.id),
-                                    resource_type: "dataset".to_string(),
-                                    score: None,
-                                }
-                            })
-                            .collect();
-                        let search_result = SearchResult {
-                            total_found: zenodo_data.hits.total,
-                            // query: question.clone(),
-                            hits,
-                        };
-
-                        // Return as JSON content
-                        let json_content =
-                            serde_json::to_string_pretty(&search_result).map_err(|e| {
-                                McpError::internal_error(
-                                    "Failed to serialize search results",
-                                    Some(json!({"error": e.to_string()})),
-                                )
-                            })?;
-
-                        Ok(CallToolResult::success(vec![Content::text(json_content)]))
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to parse search API response: {}", e);
-                        Err(McpError::internal_error(
-                            "Failed to parse search API response",
-                            Some(json!({"error": e.to_string()})),
-                        ))
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to make request to the search API: {}", e);
-                Err(McpError::internal_error(
-                    "Failed to connect to the search API",
-                    Some(json!({"error": e.to_string()})),
-                ))
-            }
-        }
-    }
+    // TODO: search_citations
+    // #[tool(description = "Search citations related to datasets or tools relevant to the user question")]
+    // async fn search_citations(
 }
 
 #[tool_handler]
@@ -319,7 +281,7 @@ impl ServerHandler for DataCommonsTools {
     ) -> Result<ReadResourceResult, McpError> {
         match uri.as_str() {
             "meta://repositories" => {
-                // TODO: list of data repositories included in the search API
+                // TODO: list of data repositories included in the search API?
                 Ok(ReadResourceResult {
                     contents: vec![ResourceContents::text("zenodo", uri)],
                 })

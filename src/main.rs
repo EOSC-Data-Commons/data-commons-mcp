@@ -1,33 +1,19 @@
+use clap::Parser;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use utoipa::OpenApi;
-use utoipa_axum::router::OpenApiRouter;
-use utoipa_axum::routes;
-use utoipa_swagger_ui::SwaggerUi;
 
-use rmcp::transport::streamable_http_server::{
-    StreamableHttpService, session::local::LocalSessionManager,
-};
-
-mod error;
-mod mcp;
-use mcp::DataCommonsTools;
-mod search;
-use search::ADDRESS;
+pub mod error;
+pub mod mcp;
+pub mod search;
+pub mod utils;
+use data_commons_mcp::{AppState, Args, build_router};
 use error::AppResult;
+
 // OpenAPI generation: https://github.com/juhaku/utoipa/blob/master/examples/axum-multipart/src/main.rs
 // MCP client: https://github.com/modelcontextprotocol/rust-sdk/blob/main/examples/clients/src/streamable_http.rs
 
-/// OpenAPI documentation for the API
-#[derive(OpenApi)]
-#[openapi(info(
-    title = "EOSC Data Commons Conversational Search API",
-    version = "1.0.0",
-    description = "Conversational Search API to find relevant data for a user question in natural language, developed for the EOSC Data Commons project"
-))]
-struct ApiDoc;
-
 #[tokio::main]
 async fn main() -> AppResult<()> {
+    let args = Args::parse();
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -40,22 +26,10 @@ async fn main() -> AppResult<()> {
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
-    let mcp_service = StreamableHttpService::new(
-        || Ok(DataCommonsTools::new()),
-        LocalSessionManager::default().into(),
-        Default::default(),
-    );
 
-    // Configure router with MCP and OpenAPI docs
-    let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .routes(routes!(search::search_handler))
-        .split_for_parts();
-    let router = router
-        .nest_service("/mcp", mcp_service)
-        .merge(SwaggerUi::new("/docs").url("/openapi.json", api));
-
+    let router = build_router(&args).await.unwrap();
     let app = router.into_make_service();
-    let listener = tokio::net::TcpListener::bind(ADDRESS).await?;
+    let listener = tokio::net::TcpListener::bind(&args.bind_address).await?;
 
     // Improve graceful shutdown
     let shutdown_signal = async {
@@ -65,7 +39,14 @@ async fn main() -> AppResult<()> {
         tracing::info!("Received CTRL+C, shutting down gracefully...");
     };
     tracing::info!(
-        "Starting Streamable HTTP MCP server on http://{ADDRESS}/mcp, OpenAPI UI on http://{ADDRESS}/docs"
+        "Starting Streamable HTTP MCP server at http://{}/mcp, {}with OpenSearch at {}",
+        args.bind_address,
+        if args.mcp_only {
+            "".to_string()
+        } else {
+            format!("OpenAPI UI at http://{}/docs, ", args.bind_address)
+        },
+        args.opensearch_url
     );
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)

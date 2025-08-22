@@ -55,17 +55,31 @@ Start the **MCP server** in dev at http://localhost:8000/mcp, with OpenAPI UI at
 cargo run
 ```
 
+Customize server configuration through CLI arguments:
+
+```sh
+cargo run -- --mcp-only --opensearch-url http://localhost:9200
+```
+
 Run and reload on change to the code:
 
 ```sh
 cargo watch -x run
 ```
 
+> [!NOTE]
+>
 > Example `curl` request:
 >
 > ```sh
-> curl -X POST http://localhost:8000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "data about insulin in EU"}], "model": "mistral-small-latest", "stream": true}'
+> curl -X POST http://localhost:8000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "data insulin"}], "model": "mistral/mistral-small-latest", "stream": true}'
 > ```
+>
+> Recommended model per supported provider:
+>
+> - `openai/gpt-4.1`
+> - `mistral/mistral-large-latest`
+> - `groq/moonshotai/kimi-k2-instruct`
 
 ### 🔌 Connect MCP client
 
