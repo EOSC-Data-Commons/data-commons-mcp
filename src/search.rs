@@ -7,8 +7,6 @@ use axum::{
 };
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 use utoipa::ToSchema;
 
@@ -26,16 +24,22 @@ use rmcp::{
 use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::mcp::{SearchHit, SearchResult};
+use crate::utils::{get_llm_config, SearchLog};
 
-const SYSTEM_PROMPT_TOOLS: &str = "You are an assistant that help users find datasets and tools for scientific research. Define if you need to use one of the tool provided to get more context to answer the user request.";
-const SYSTEM_PROMPT_RESOLUTION: &str = "You are an assistant that help users find datasets and tools for scientific research. Given the user question and datasets retrieved from the search API, summarize the findings in 1 sentence, extract which datasets might be the most interesting to answer the user question, and give them a relevance score between 0 and 1";
+const SYSTEM_PROMPT_TOOLS: &str = r#"You are an assistant that help users find datasets and tools for scientific research.
+Define if you need to use one of the tool provided to get more context to answer the user request, or directly answer the user question.
+"#;
+const SYSTEM_PROMPT_RESOLUTION: &str = r#"You are an assistant that help users find datasets and tools for scientific research.
+Given the user question and datasets retrieved from the search API, summarize the findings in 1 sentence,
+extract which datasets might be the most interesting to answer the user question, and give them a relevance score between 0 and 1
+"#;
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct SearchInput {
     pub messages: Vec<ApiChatMessage>,
-    // #[schema(example = "mistral/mistral-small-latest")]
     // #[schema(example = "groq/moonshotai/kimi-k2-instruct")]
-    #[schema(example = "openai/gpt-4.1-nano")]
+    // #[schema(example = "openai/gpt-4.1-nano")]
+    #[schema(example = "mistral/mistral-small-latest")]
     pub model: String,
     #[serde(default)]
     pub stream: bool,
@@ -126,58 +130,6 @@ struct LLMStructuredOutput {
 struct ScoredHits {
     url: String,
     score: f64,
-}
-
-/// Structure for logging search conversations and responses
-#[derive(Debug, Serialize)]
-struct SearchLog {
-    timestamp: String,
-    request_id: String,
-    model: String,
-    stream: bool,
-    conversation: Vec<ApiChatMessage>,
-    response: SearchResponse,
-    execution_time_ms: u64,
-}
-
-impl SearchLog {
-    fn new(
-        request_id: String,
-        model: String,
-        stream: bool,
-        conversation: Vec<ApiChatMessage>,
-        response: SearchResponse,
-        execution_time_ms: u64,
-    ) -> Self {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let timestamp = format!("{timestamp}");
-        Self {
-            timestamp,
-            request_id,
-            model,
-            stream,
-            conversation,
-            response,
-            execution_time_ms,
-        }
-    }
-
-    /// Write the log entry to the search.log file
-    fn write_to_file(&self) -> AppResult<()> {
-        let log_entry = serde_json::to_string(self)?;
-        let log_path = "data/search.log";
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_path)
-            .map_err(|e| AppError::Llm(format!("Failed to open log file: {e}")))?;
-        writeln!(file, "{log_entry}")
-            .map_err(|e| AppError::Llm(format!("Failed to write to log file: {e}")))?;
-        Ok(())
-    }
 }
 
 /// Workflow manager for handling search operations with fragmented steps
@@ -406,21 +358,18 @@ impl SearchWorkflow {
             }
         };
 
-        // Create a lookup map for LLM scores by DOI
+        // Create a lookup map for LLM scores by URL
         let score_lookup: std::collections::HashMap<String, f64> = llm_response
             .hits
             .into_iter()
             .map(|llm_dataset| (llm_dataset.url, llm_dataset.score))
             .collect();
 
-        // Clone search results to make it mutable for scoring
         let mut search_results = search_results;
-
         // Add scores to all datasets from search results
         for hit in &mut search_results.hits {
             hit.score = Some(score_lookup.get(&hit.url).copied().unwrap_or(0.0));
         }
-
         // Sort hits by score in descending order (highest score first)
         search_results.hits.sort_by(|a, b| {
             let score_a = a.score.unwrap_or(0.0);
@@ -534,55 +483,6 @@ const SEARCH_OUTPUT_SCHEMA: &str = r#"
         "strict": true
     }
 "#;
-
-/// Determines the LLM backend and API key based on available environment variables
-/// OpenAI takes priority if both are available
-fn get_llm_config(model: &str) -> Result<(LLMBackend, String, String), String> {
-    // Parse provider/model_name from input
-    let parts: Vec<&str> = model.splitn(2, '/').collect();
-    let (provider, model_name) = match parts.as_slice() {
-        [provider, model_name] => (provider.to_string(), model_name.to_string()),
-        [single] => (single.to_string(), single.to_string()),
-        _ => ("openai".to_string(), model.to_string()), // fallback
-    };
-    let backend_result = match provider.as_str() {
-        "openai" => {
-            if std::env::var("OPENAI_API_KEY").is_ok() {
-                match std::env::var("OPENAI_API_KEY") {
-                    Ok(key) => Ok((LLMBackend::OpenAI, key)),
-                    Err(_) => Err("OPENAI_API_KEY environment variable not set".to_string()),
-                }
-            } else {
-                Err("OPENAI_API_KEY environment variable not set".to_string())
-            }
-        }
-        "mistral" => {
-            if std::env::var("MISTRAL_API_KEY").is_ok() {
-                match std::env::var("MISTRAL_API_KEY") {
-                    Ok(key) => Ok((LLMBackend::Mistral, key)),
-                    Err(_) => Err("MISTRAL_API_KEY environment variable not set".to_string()),
-                }
-            } else {
-                Err("MISTRAL_API_KEY environment variable not set".to_string())
-            }
-        }
-        "groq" => {
-            if std::env::var("GROQ_API_KEY").is_ok() {
-                match std::env::var("GROQ_API_KEY") {
-                    Ok(key) => Ok((LLMBackend::Groq, key)),
-                    Err(_) => Err("GROQ_API_KEY environment variable not set".to_string()),
-                }
-            } else {
-                Err("GROQ_API_KEY environment variable not set".to_string())
-            }
-        }
-        _ => Err(format!("Unknown provider: {provider}")),
-    };
-    match backend_result {
-        Ok((backend, api_key)) => Ok((backend, api_key, model_name)),
-        Err(e) => Err(e),
-    }
-}
 
 /// Search data relevant to a user question in a conversation
 #[utoipa::path(

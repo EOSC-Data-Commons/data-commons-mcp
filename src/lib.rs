@@ -10,6 +10,7 @@ use utoipa_swagger_ui::SwaggerUi;
 mod error;
 mod mcp;
 mod search;
+mod utils;
 use crate::error::AppResult;
 use crate::mcp::DataCommonsTools;
 

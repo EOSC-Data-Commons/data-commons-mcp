@@ -79,10 +79,46 @@ impl DataCommonsTools {
                 "query_string": {
                     "default_operator": "AND",
                     "default_field": "_all_fields",
-                    "query": question
+                    "query": question,
+                    // "query": format!("*{question}*"),
                 }
             }
         });
+        // let query_body = json!({
+        //     "query": {
+        //         "bool": {
+        //             "filter": [
+        //                 {"term": {"format": "CSV"}}
+        //             ],
+        //             "must": {
+        //                 "knn": {
+        //                     "embedding": {
+        //                         "vector": query_embedding,
+        //                         "k": 5
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // });
+        // Or nested field to have multiple embeddings per document
+        // {
+        //     "query": {
+        //         "nested": {
+        //             "path": "my_vectors",
+        //             "query": {
+        //                 "knn": {
+        //                     "my_vectors.vector": {
+        //                         "vector": [ ... ],
+        //                         "k": 10
+        //                     }
+        //                 }
+        //             },
+        //             "score_mode": "max"
+        //         }
+        //     }
+        // }
+
         // Execute the OpenSearch request
         let response = self
             .opensearch_client
