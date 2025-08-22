@@ -184,7 +184,7 @@ impl SearchWorkflow {
     pub async fn execute_tool_calls(
         &self,
         messages: &[ApiChatMessage],
-    ) -> AppResult<(Option<Vec<llm::ToolCall>>, SearchResult)> {
+    ) -> AppResult<(String, Option<Vec<llm::ToolCall>>, SearchResult)> {
         // Convert messages to LLM ChatMessage format
         let chat_messages: Vec<ChatMessage> =
             messages.iter().map(|msg| msg.to_chat_message()).collect();
@@ -211,7 +211,7 @@ impl SearchWorkflow {
         let llm = llm_builder.build().expect("Failed to build LLM client");
 
         // Query the LLM to check if tool call necessary
-        let (_response_text, tool_calls) =
+        let (response_text, tool_calls) =
             match llm.chat_with_tools(&chat_messages, llm.tools()).await {
                 Ok(response) => {
                     tracing::debug!("LLM tool call response: {response:#?}");
@@ -280,7 +280,7 @@ impl SearchWorkflow {
             }
         }
 
-        Ok((tool_calls, search_results))
+        Ok((response_text, tool_calls, search_results))
     }
 
     /// Step 2: Generate summary and scores using LLM with structured output, then create final response
@@ -565,7 +565,7 @@ fn create_search_stream(
             }
         };
         // Step 1: Execute tool calls if needed
-        let (tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
+        let (response_txt, tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Tool call execution failed: {:?}", e);
@@ -582,18 +582,18 @@ fn create_search_stream(
                 // Direct response without tool calls
                 let response = SearchResponse {
                     hits: vec![],
-                    summary: "I can help you find datasets and tools for scientific research. Please provide more specific details about what you're looking for.".to_string(),
+                    summary: response_txt,
                 };
+                yield Ok(workflow.create_stream_chunk(
+                    Some(response.summary.clone()),
+                    Some("stop".to_string())
+                )?);
                 workflow.log_response(
                     resp.stream,
                     resp.messages.clone(),
                     response,
                     execution_time,
                 );
-                yield Ok(workflow.create_stream_chunk(
-                    Some("I can help you find datasets and tools for scientific research. Please provide more specific details about what you're looking for.".to_string()),
-                    Some("stop".to_string())
-                )?);
             } else {
                 // No results found
                 let response = SearchResponse {
@@ -666,7 +666,7 @@ async fn regular_search_handler(
         }
     };
     // Step 1: Execute tool calls if needed
-    let (_tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
+    let (_response_txt, _tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
         Ok(result) => result,
         Err(e) => {
             tracing::error!("Tool call execution failed: {:?}", e);
