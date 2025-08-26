@@ -28,6 +28,7 @@ use crate::utils::{get_llm_config, SearchLog};
 
 const SYSTEM_PROMPT_TOOLS: &str = r#"You are an assistant that help users find datasets and tools for scientific research.
 Define if you need to use one of the tool provided to get more context to answer the user request, or directly answer the user question.
+If the user provides a simple question (just a word or concept), you should prioritize searching for relevant datasets.
 "#;
 const SYSTEM_PROMPT_RESOLUTION: &str = r#"You are an assistant that help users find datasets and tools for scientific research.
 Given the user question and datasets retrieved from the search API, summarize the findings in 1 sentence,
@@ -96,7 +97,7 @@ impl ApiChatMessage {
 }
 
 /// OpenAI-compatible streaming response chunk
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct StreamChunk {
     id: String,
     object: String,
@@ -105,14 +106,14 @@ struct StreamChunk {
     choices: Vec<StreamChoice>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct StreamChoice {
     index: u32,
     delta: StreamDelta,
     finish_reason: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct StreamDelta {
     role: Option<String>,
     content: Option<String>,
@@ -421,7 +422,7 @@ impl SearchWorkflow {
                 finish_reason,
             }],
         };
-        Ok(sse::Event::default().data(serde_json::to_string(&chunk)?))
+        Ok(sse::Event::default().event("message").data(serde_json::to_string(&chunk)?))
     }
 
     /// Log search operation response with execution time
@@ -491,6 +492,7 @@ const SEARCH_OUTPUT_SCHEMA: &str = r#"
     request_body(content = SearchInput, description = "List of messages in the chat"),
     responses(
         (status = 200, description = "Search results", body = SearchResponse),
+        (status = 200, description = "Search results (SSE stream)", content_type = "text/event-stream", body = StreamChunk),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),

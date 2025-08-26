@@ -36,7 +36,7 @@ async fn main() -> AppResult<()> {
         tokio::signal::ctrl_c()
             .await
             .expect("Failed to install CTRL+C signal handler");
-        tracing::info!("Received CTRL+C, shutting down gracefully...");
+        tracing::info!("Shutting down...");
     };
     tracing::info!(
         "Starting Streamable HTTP MCP server at http://{}/mcp, {}with OpenSearch at {}",
