@@ -24,7 +24,7 @@ use rmcp::{
 use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::mcp::{SearchHit, SearchResult};
-use crate::utils::{get_llm_config, SearchLog};
+use crate::utils::{SearchLog, get_llm_config};
 
 const SYSTEM_PROMPT_TOOLS: &str = r#"You are an assistant that help users find datasets and tools for scientific research.
 Define if you need to use one of the tool provided to get more context to answer the user request, or directly answer the user question.
@@ -422,7 +422,9 @@ impl SearchWorkflow {
                 finish_reason,
             }],
         };
-        Ok(sse::Event::default().event("message").data(serde_json::to_string(&chunk)?))
+        Ok(sse::Event::default()
+            .event("message")
+            .data(serde_json::to_string(&chunk)?))
     }
 
     /// Log search operation response with execution time
@@ -668,16 +670,17 @@ async fn regular_search_handler(
         }
     };
     // Step 1: Execute tool calls if needed
-    let (_response_txt, _tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
-        Ok(result) => result,
-        Err(e) => {
-            tracing::error!("Tool call execution failed: {:?}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "Error searching for datasets"})),
-            );
-        }
-    };
+    let (_response_txt, _tool_calls, search_results) =
+        match workflow.execute_tool_calls(&resp.messages).await {
+            Ok(result) => result,
+            Err(e) => {
+                tracing::error!("Tool call execution failed: {:?}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "Error searching for datasets"})),
+                );
+            }
+        };
     // If no datasets were found, return early
     if search_results.total_found == 0 || search_results.hits.is_empty() {
         let execution_time = start_time
