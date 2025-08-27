@@ -1,5 +1,6 @@
-.DS_Store
 /target
-/.cargo/config.toml
-*.env
 /data
+/.cargo/config.toml
+.DS_Store
+.fastembed_cache
+*.env

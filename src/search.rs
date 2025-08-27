@@ -197,7 +197,6 @@ impl SearchWorkflow {
             .model(&self.llm_model)
             .max_tokens(1024)
             .temperature(0.1)
-            .stream(false)
             .system(SYSTEM_PROMPT_TOOLS);
 
         // Convert MCP tools to LLM functions and add them to the llm builder
@@ -335,7 +334,6 @@ impl SearchWorkflow {
             .model(&self.llm_model)
             .max_tokens(512)
             .temperature(0.1)
-            .stream(false)
             .system(SYSTEM_PROMPT_RESOLUTION)
             .schema(schema)
             .build()

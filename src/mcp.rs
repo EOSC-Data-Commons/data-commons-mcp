@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use opensearch::{OpenSearch, http::transport::Transport};
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
@@ -9,7 +12,10 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::sync::Mutex;
 use utoipa::ToSchema;
+
+use crate::error::AppResult;
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct UserQuestion {
@@ -49,19 +55,49 @@ pub struct SearchHit {
     // pub doi: Option<String>,
 }
 
+const OPENSEARCH_INDEX_DATASETS: &str = "test_datacite";
+
 #[derive(Clone)]
 pub struct DataCommonsTools {
     tool_router: ToolRouter<DataCommonsTools>,
     opensearch_client: OpenSearch,
+    embedding_model: Arc<Mutex<TextEmbedding>>,
 }
 
 #[tool_router]
 impl DataCommonsTools {
-    pub fn new(opensearch_url: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(opensearch_url: &str) -> AppResult<Self> {
         Ok(Self {
             tool_router: Self::tool_router(),
             opensearch_client: OpenSearch::new(Transport::single_node(opensearch_url)?),
+            embedding_model: Arc::new(Mutex::new(
+                TextEmbedding::try_new(InitOptions::new(EmbeddingModel::BGESmallENV15)).unwrap(),
+            )),
         })
+    }
+
+    /// Generate embedding for a given text using the shared fastembed model
+    async fn generate_embedding(&self, text: &str) -> Result<Vec<f32>, ErrorData> {
+        // Lock the model for the duration of embedding generation
+        let mut model = self.embedding_model.lock().await;
+        let embeddings = model
+            .embed(vec![format!("passage: {}", text)], None)
+            // TODO: use rmcp::ErrorData
+            .map_err(|e| {
+                ErrorData::new(
+                    ErrorCode(500),
+                    format!("Failed to generate embedding: {e}"),
+                    None,
+                )
+            })?;
+        if embeddings.is_empty() {
+            return Err(ErrorData::new(
+                ErrorCode(500),
+                "No embeddings generated",
+                None,
+            ));
+        }
+        Ok(embeddings[0].clone())
     }
 
     fn _create_resource_text(&self, uri: &str, name: &str) -> Resource {
@@ -74,16 +110,29 @@ impl DataCommonsTools {
         Parameters(UserQuestion { question }): Parameters<UserQuestion>,
     ) -> Result<CallToolResult, McpError> {
         // Build the OpenSearch query here
+        let query_embedding = self.generate_embedding(&question).await?;
         let query_body = json!({
+            "_source": ["titles.title", "subjects.subject", "descriptions.description", "url", "doi"],
             "query": {
-                "query_string": {
-                    "default_operator": "AND",
-                    "default_field": "_all_fields",
-                    "query": question,
-                    // "query": format!("*{question}*"),
+                "knn": {
+                    "emb": {
+                        "vector": query_embedding,
+                        "k": 5
+                    }
                 }
             }
         });
+        // let query_body = json!({
+        //     "query": {
+        //         "query_string": {
+        //             "default_operator": "AND",
+        //             "default_field": "_all_fields",
+        //             "query": question,
+        //             // "query": format!("*{question}*"),
+        //         }
+        //     }
+        // });
+
         // let query_body = json!({
         //     "query": {
         //         "bool": {
@@ -109,7 +158,7 @@ impl DataCommonsTools {
         //             "query": {
         //                 "knn": {
         //                     "my_vectors.vector": {
-        //                         "vector": [ ... ],
+        //                         "vector": query_embedding,
         //                         "k": 10
         //                     }
         //                 }
@@ -122,12 +171,13 @@ impl DataCommonsTools {
         // Execute the OpenSearch request
         let response = self
             .opensearch_client
-            .search(opensearch::SearchParts::Index(&["test_datacite"]))
+            .search(opensearch::SearchParts::Index(&[OPENSEARCH_INDEX_DATASETS]))
             .body(query_body)
             .send()
             .await;
         match response {
             Ok(resp) => {
+                tracing::debug!("OpenSearch response status: {resp:?}");
                 let resp_json = resp.json::<serde_json::Value>().await.map_err(|e| {
                     tracing::error!("Failed to parse OpenSearch response: {}", e);
                     McpError::internal_error(
@@ -139,6 +189,7 @@ impl DataCommonsTools {
                 // tracing::debug!("MCP OpenSearch JSON response: {resp_json:?}");
                 let empty_hits = vec![];
                 let hits_array = resp_json["hits"]["hits"].as_array().unwrap_or(&empty_hits);
+                tracing::debug!("{hits_array:?}");
                 // Convert OpenSearch hits to our own SearchHit struct
                 let hits: Vec<SearchHit> = hits_array
                     .iter()
