@@ -23,7 +23,7 @@ use rmcp::{
 
 use crate::AppState;
 use crate::error::{AppError, AppResult};
-use crate::mcp::{SearchHit, SearchResult};
+use crate::mcp::{McpSearchResult, SearchHit};
 use crate::utils::{SearchLog, get_llm_config};
 
 const SYSTEM_PROMPT_TOOLS: &str = r#"You are an assistant that help users find datasets and tools for scientific research.
@@ -40,7 +40,7 @@ pub struct SearchInput {
     pub messages: Vec<ApiChatMessage>,
     // #[schema(example = "groq/moonshotai/kimi-k2-instruct")]
     // #[schema(example = "openai/gpt-4.1-nano")]
-    #[schema(example = "mistral/mistral-small-latest")]
+    #[schema(example = "ai/mistral-small-latest")]
     pub model: String,
     #[serde(default)]
     pub stream: bool,
@@ -185,7 +185,7 @@ impl SearchWorkflow {
     pub async fn execute_tool_calls(
         &self,
         messages: &[ApiChatMessage],
-    ) -> AppResult<(String, Option<Vec<llm::ToolCall>>, SearchResult)> {
+    ) -> AppResult<(String, Option<Vec<llm::ToolCall>>, McpSearchResult)> {
         // Convert messages to LLM ChatMessage format
         let chat_messages: Vec<ChatMessage> =
             messages.iter().map(|msg| msg.to_chat_message()).collect();
@@ -226,7 +226,7 @@ impl SearchWorkflow {
                 }
             };
 
-        let mut search_results = SearchResult {
+        let mut search_results = McpSearchResult {
             total_found: 0,
             hits: vec![],
         };
@@ -250,33 +250,39 @@ impl SearchWorkflow {
                     })
                     .await?;
 
-                // Extract and parse structured JSON content from the tool result
-                let tool_result_text = tool_results
-                    .content
-                    .iter()
-                    .flat_map(|annotated_vec| annotated_vec.iter())
-                    .filter_map(|annotated| match &annotated.raw {
-                        rmcp::model::RawContent::Text(text_content) => {
-                            Some(text_content.text.as_str())
+                // Handle structured content if present
+                if let Some(structured) = &tool_results.structured_content {
+                    // serde_json::from_value::<McpSearchResult>(structured.clone())?
+                    match serde_json::from_value::<McpSearchResult>(structured.clone()) {
+                        Ok(new_search_results) => {
+                            // Accumulate results from multiple tool calls
+                            search_results.hits.extend(new_search_results.hits);
+                            search_results.total_found += new_search_results.total_found;
                         }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
-
-                // Parse the structured JSON response from MCP search data tool
-                let new_search_result =
-                    match serde_json::from_str::<SearchResult>(&tool_result_text) {
-                        Ok(result) => result,
                         Err(e) => {
-                            tracing::error!("Failed to parse search result JSON: {e}");
                             return Err(AppError::Serde(e));
                         }
-                    };
-
-                // Accumulate results from multiple tool calls
-                search_results.hits.extend(new_search_result.hits);
-                search_results.total_found += new_search_result.total_found;
+                    }
+                } else {
+                    // Fallback: plain content
+                    tracing::warn!(
+                        "Tool {} returned plain text content: {:?}",
+                        call.function.name,
+                        tool_results.content
+                    );
+                    // let plain_content = tool_results
+                    //     .content
+                    //     .iter()
+                    //     .flat_map(|annotated_vec| annotated_vec.iter())
+                    //     .filter_map(|annotated| match &annotated.raw {
+                    //         rmcp::model::RawContent::Text(text_content) => {
+                    //             Some(text_content.text.as_str())
+                    //         }
+                    //         _ => None,
+                    //     })
+                    //     .collect::<Vec<_>>()
+                    //     .join(" ");
+                }
             }
         }
 
@@ -287,7 +293,7 @@ impl SearchWorkflow {
     pub async fn generate_summary_and_scores(
         &self,
         messages: &[ApiChatMessage],
-        search_results: SearchResult,
+        search_results: McpSearchResult,
     ) -> AppResult<SearchResponse> {
         if search_results.total_found == 0 || search_results.hits.is_empty() {
             return Err(AppError::NoDataFound(

@@ -72,13 +72,13 @@ cargo watch -x run
 > Example `curl` request:
 >
 > ```sh
-> curl -X POST http://localhost:8000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "data insulin"}], "model": "mistral/mistral-small-latest", "stream": true}'
+> curl -X POST http://localhost:8000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "data insulin"}], "model": "mistralai/mistral-small-latest", "stream": true}'
 > ```
 >
 > Recommended model per supported provider:
 >
 > - `openai/gpt-4.1`
-> - `mistral/mistral-large-latest`
+> - `mistralai/mistral-large-latest`
 > - `groq/moonshotai/kimi-k2-instruct`
 
 ### 🔌 Connect MCP client

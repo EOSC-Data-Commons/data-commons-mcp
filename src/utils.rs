@@ -81,7 +81,7 @@ pub fn get_llm_config(model: &str) -> Result<(LLMBackend, String, String), Strin
                 Err("OPENAI_API_KEY environment variable not set".to_string())
             }
         }
-        "mistral" => {
+        "mistralai" => {
             if std::env::var("MISTRAL_API_KEY").is_ok() {
                 match std::env::var("MISTRAL_API_KEY") {
                     Ok(key) => Ok((LLMBackend::Mistral, key)),

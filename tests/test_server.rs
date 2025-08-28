@@ -35,7 +35,7 @@ async fn test_search_endpoint() {
         "messages": [
             {"role": "user", "content": "insulin"}
         ],
-        "model": "mistral/mistral-small-latest",
+        "model": "mistralai/mistral-small-latest",
         // "model": "openai/gpt-4.1-nano",
         // "model": "groq/moonshotai/kimi-k2-instruct",
         "stream": false,

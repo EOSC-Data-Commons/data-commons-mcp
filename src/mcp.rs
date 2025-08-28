@@ -26,7 +26,7 @@ pub struct UserQuestion {
 
 /// Structured response for search results
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SearchResult {
+pub struct McpSearchResult {
     pub total_found: u64,
     pub hits: Vec<SearchHit>,
 }
@@ -112,7 +112,7 @@ impl DataCommonsTools {
         // Build the OpenSearch query here
         let query_embedding = self.generate_embedding(&question).await?;
         let query_body = json!({
-            "_source": ["titles.title", "subjects.subject", "descriptions.description", "url", "doi"],
+            "_source": ["titles.title", "subjects.subject", "descriptions.description", "url", "doi", "dates", "publicationYear"],
             "query": {
                 "knn": {
                     "emb": {
@@ -186,10 +186,10 @@ impl DataCommonsTools {
                     )
                 })?;
                 let total_found = resp_json["hits"]["total"]["value"].as_u64().unwrap_or(0);
-                // tracing::debug!("MCP OpenSearch JSON response: {resp_json:?}");
+                tracing::debug!("MCP OpenSearch JSON response: {resp_json:?}");
                 let empty_hits = vec![];
                 let hits_array = resp_json["hits"]["hits"].as_array().unwrap_or(&empty_hits);
-                tracing::debug!("{hits_array:?}");
+                // tracing::debug!("{hits_array:?}");
                 // Convert OpenSearch hits to our own SearchHit struct
                 let hits: Vec<SearchHit> = hits_array
                     .iter()
@@ -243,15 +243,16 @@ impl DataCommonsTools {
                         }
                     })
                     .collect();
-                let search_result = SearchResult { total_found, hits };
-                let json_content = serde_json::to_string_pretty(&search_result).map_err(|e| {
-                    McpError::internal_error(
-                        "Failed to serialize search results",
-                        Some(json!({"error": e.to_string()})),
-                    )
-                })?;
-                // tracing::debug!("MCP search results: {json_content}");
-                Ok(CallToolResult::success(vec![Content::text(json_content)]))
+                let search_results = McpSearchResult { total_found, hits };
+                // tracing::debug!("MCP search results: {search_results:?}");
+                Ok(CallToolResult::structured(
+                    serde_json::to_value(&search_results).map_err(|e| {
+                        McpError::internal_error(
+                            "Failed to serialize search results",
+                            Some(json!({"error": e.to_string()})),
+                        )
+                    })?,
+                ))
             }
             Err(e) => {
                 tracing::error!("Failed to make request to OpenSearch: {}", e);
@@ -271,7 +272,7 @@ impl DataCommonsTools {
         }): Parameters<UserQuestion>,
     ) -> Result<CallToolResult, McpError> {
         // TODO: implement
-        let search_result = SearchResult {
+        let search_results = McpSearchResult {
             total_found: 8292030,
             hits: vec![SearchHit {
                 id: "9x6qrJgBTkyZK1Kx4HAC".to_string(),
@@ -285,13 +286,14 @@ impl DataCommonsTools {
                 score: None,
             }],
         };
-        let json_content = serde_json::to_string_pretty(&search_result).map_err(|e| {
-            McpError::internal_error(
-                "Failed to serialize search results",
-                Some(json!({"error": e.to_string()})),
-            )
-        })?;
-        Ok(CallToolResult::success(vec![Content::text(json_content)]))
+        Ok(CallToolResult::structured(
+            serde_json::to_value(&search_results).map_err(|e| {
+                McpError::internal_error(
+                    "Failed to serialize search results",
+                    Some(json!({"error": e.to_string()})),
+                )
+            })?,
+        ))
     }
 
     // TODO: search_citations
