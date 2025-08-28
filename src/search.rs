@@ -40,7 +40,7 @@ pub struct SearchInput {
     pub messages: Vec<ApiChatMessage>,
     // #[schema(example = "groq/moonshotai/kimi-k2-instruct")]
     // #[schema(example = "openai/gpt-4.1-nano")]
-    #[schema(example = "ai/mistral-small-latest")]
+    #[schema(example = "mistralai/mistral-small-latest")]
     pub model: String,
     #[serde(default)]
     pub stream: bool,

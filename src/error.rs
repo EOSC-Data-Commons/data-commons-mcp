@@ -27,8 +27,6 @@ pub enum AppError {
     // Http(reqwest::Error),
     // /// API key missing or invalid
     // ApiKey(String),
-    // /// Search service errors
-    // Search(String),
 }
 
 impl fmt::Display for AppError {
@@ -44,7 +42,6 @@ impl fmt::Display for AppError {
             AppError::NoDataFound(msg) => write!(f, "No data found: {msg}"),
             // AppError::Http(err) => write!(f, "HTTP error: {}", err),
             // AppError::ApiKey(msg) => write!(f, "API key error: {}", msg),
-            // AppError::Search(msg) => write!(f, "Search error: {}", msg),
         }
     }
 }
@@ -82,7 +79,6 @@ impl IntoResponse for AppError {
             AppError::NoDataFound(_) => (StatusCode::NOT_FOUND, "No data found"),
             // AppError::Http(_) => (StatusCode::BAD_GATEWAY, "External service error"),
             // AppError::ApiKey(_) => (StatusCode::UNAUTHORIZED, "Invalid API key"),
-            // AppError::Search(_) => (StatusCode::BAD_GATEWAY, "Search service error"),
         };
 
         let body = Json(json!({
@@ -138,10 +134,6 @@ pub type AppResult<T> = Result<T, AppError>;
 // impl AppError {
 //     pub fn mcp(msg: impl Into<String>) -> Self {
 //         AppError::Mcp(msg.into())
-//     }
-
-//     pub fn search(msg: impl Into<String>) -> Self {
-//         AppError::Search(msg.into())
 //     }
 
 //     pub fn api_key(msg: impl Into<String>) -> Self {

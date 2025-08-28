@@ -46,7 +46,7 @@ pub struct Args {
 #[openapi(info(
     title = "EOSC Data Commons Conversational Search API",
     version = "1.0.0",
-    description = "Conversational Search API to find relevant data for a user question in natural language, developed for the EOSC Data Commons project"
+    description = "Conversational Search API to find relevant data and services for a user question in natural language, developed for the EOSC Data Commons project"
 ))]
 struct ApiDoc;
 
@@ -69,7 +69,6 @@ pub async fn build_router(args: &Args) -> AppResult<axum::Router> {
         bind_address: args.bind_address.clone(),
     };
 
-    // Configure router with MCP and conditionally with search endpoint and OpenAPI docs
     let router = if args.mcp_only {
         // MCP-only mode: just serve the MCP endpoint
         axum::Router::new().nest_service("/mcp", mcp_service)

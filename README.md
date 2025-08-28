@@ -17,7 +17,7 @@ The HTTP API comprises 2 main endpoints:
     - [ ] Search tools
     - [ ] Search citations related to datasets or tools
 
-- `/search`: simple **HTTP POST** endpoint (JSON) for querying the MCP server via an LLM provider
+- `/search`: **HTTP POST** endpoint (JSON) for querying the MCP server via an LLM provider with streaming response
   - Uses [`axum`](https://github.com/tokio-rs/axum), [`utoipa`](https://github.com/juhaku/utoipa) for OpenAPI spec generation, [`llm`](https://github.com/graniet/llm) to interact with LLM providers (e.g. [Mistral](https://admin.mistral.ai/organization/api-keys), OpenAI)
   - Returns a streaming response: tool call requested, then tool call results, and final search results.
 
