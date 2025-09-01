@@ -237,7 +237,13 @@ impl DataCommonsTools {
                             publication_date,
                             keywords,
                             creators,
-                            url: source["url"].as_str().unwrap_or("").to_string(),
+                            url: source["url"]
+                                .as_str()
+                                .unwrap_or(&format!(
+                                    "https://doi.org/{}",
+                                    source["doi"].as_str().unwrap_or("")
+                                ))
+                                .to_string(),
                             resource_type: "dataset".to_string(),
                             score: hit["_score"].as_f64(),
                         }
