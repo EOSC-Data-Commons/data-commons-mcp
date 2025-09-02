@@ -1,23 +1,23 @@
-FROM rust:alpine AS build
+FROM rust:trixie AS build
 
-# Install necessary build dependencies for Alpine
-RUN apk add --no-cache \
-    musl-dev \
-    gcc \
-    libc-dev \
-    pkgconfig \
-    curl \
-    openssl-dev \
-    openssl-libs-static
+RUN apt-get update && apt-get -y install libssl-dev curl build-essential
 
 COPY . /app
 
 WORKDIR /app
 
-RUN cargo build --release
+
+# Might need some flags, see https://crates.io/crates/ort
+# ENV RUSTFLAGS="-Clink-args=-Wl,-rpath,\$ORIGIN"
+
+# RUN cargo build --release
+RUN --mount=type=cache,target=/root/.cargo cargo build --release
 
 
-FROM alpine AS runtime
+FROM debian:trixie AS runtime
+
+# Install libssl3 for libssl.so.3 runtime dependency and CA certificates to ddl ONNX model files
+RUN apt-get update && apt-get -y install libssl3 ca-certificates
 
 COPY --from=build /app/target/release/data-commons-mcp /
 EXPOSE 8000
