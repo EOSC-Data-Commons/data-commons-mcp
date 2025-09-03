@@ -18,6 +18,7 @@ rmcp = { version = "0.6", features = [
     "client",
     "reqwest",
     "transport-streamable-http-client",
+    "transport-streamable-http-client-reqwest",
     "transport-child-process",
     "tower",
     # "auth"
@@ -39,7 +40,7 @@ tracing-subscriber = { version = "0.3", features = [
     "std",
     "fmt",
 ] }
-llm = { git = "https://github.com/vemonet/llm", branch = "common-provider-openai-apis", default-features = false, features = [
+llm = { git = "https://github.com/vemonet/llm", branch = "add-normalize-response", default-features = false, features = [
     "rustls-tls", "mistral", "groq", "openai",
 ] }
 opensearch = "2.3"

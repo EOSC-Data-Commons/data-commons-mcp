@@ -4,7 +4,7 @@ use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use opensearch::{OpenSearch, http::transport::Transport};
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
-    handler::server::{router::tool::ToolRouter, tool::Parameters},
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::*,
     schemars,
     service::RequestContext,
@@ -59,7 +59,7 @@ const OPENSEARCH_INDEX_DATASETS: &str = "test_datacite";
 
 #[derive(Clone)]
 pub struct DataCommonsTools {
-    tool_router: ToolRouter<DataCommonsTools>,
+    tool_router: ToolRouter<Self>,
     opensearch_client: OpenSearch,
     embedding_model: Arc<Mutex<TextEmbedding>>,
 }
@@ -318,7 +318,7 @@ impl ServerHandler for DataCommonsTools {
                 .enable_tools()
                 .build(),
             server_info: Implementation::from_build_env(),
-            instructions: Some("This server provides a search tool that can search for scientific data in public repositories.".to_string()),
+            instructions: Some("This server provides search tools that can search for scientific data in public repositories.".to_string()),
         }
     }
 
