@@ -53,7 +53,8 @@ jobs:
         with:
           context: .
           push: true
-          tags: "ghcr.io/${{ github.repository }}:latest"
+          tags: "ghcr.io/eosc-data-commons/data-commons-mcp:latest"
+          # tags: "ghcr.io/${{ github.repository }}:latest"
           # tags: ${{ steps.meta.outputs.tags }}
           # labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
