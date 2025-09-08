@@ -1,0 +1,157 @@
+name: Build
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches: [ main ]
+    tags:
+      - "v*.*.*"
+  # pull_request:
+
+jobs:
+  test:
+    name: ✅ Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update
+      - run: cargo install cargo-deny
+      - run: cargo fmt -- --check
+      - run: cargo clippy --all --all-targets --all-features
+      - run: cargo deny check
+      # - run: cargo build --release
+      # - run: cargo test
+      #   env:
+      #     MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+
+  docker:
+    name: 🐳 Build Docker
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # needs: test
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/eosc-data-commons/data-commons-mcp
+
+      - name: Build and push Docker image
+        id: build-and-push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: true
+          # tags: "ghcr.io/eosc-data-commons/data-commons-mcp:latest"
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+
+  build_binaries:
+    name: 📦️ Build binaries for ${{ matrix.os }} (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            target: x86_64-unknown-linux-gnu
+          - os: linux
+            target: aarch64-unknown-linux-gnu
+          - os: macos
+            target: x86_64-apple-darwin
+          - os: macos
+            target: aarch64-apple-darwin
+          - os: windows
+            target: x86_64-pc-windows-msvc
+          - os: windows
+            target: aarch64-pc-windows-msvc
+
+    runs-on: ${{ (matrix.os == 'linux' && 'ubuntu') || matrix.os }}-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add cross-compilation target
+        run: rustup update && rustup target add ${{ matrix.target }}
+
+      - name: Install aarch64 linux dependencies
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt update && sudo apt install -y g++-aarch64-linux-gnu
+
+      - name: Add aarch64 linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu' || matrix.target == 'aarch64-apple-darwin'
+        run: echo -e "\n\n[target.aarch64-unknown-linux-gnu]\nlinker = \"aarch64-linux-gnu-gcc\"" >> .cargo/config.toml
+        # This can't be directly added to cargo config.toml because it makes the wheel build fails
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
+        # env:
+        #   CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-commons-mcp_${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/data-commons-mcp${{ matrix.os == 'windows' && '.exe' || '' }}
+
+      - if: startsWith(github.ref, 'refs/tags/')
+        name: Prepare for release
+        run: |
+          mv target/${{ matrix.target }}/release/data-commons-mcp${{ matrix.os == 'windows' && '.exe' || '' }} data-commons-mcp_${{ matrix.target }}${{ matrix.os == 'windows' && '.exe' || '' }}
+
+      - uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            data-commons-mcp_${{ matrix.target }}${{ matrix.os == 'windows' && '.exe' || '' }}
+
+  generate-changelog:
+    name: 🏔️ Generate changelog for the GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    outputs:
+      release_body: ${{ steps.git-cliff.outputs.content }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Generate a changelog
+        uses: orhun/git-cliff-action@main
+        id: git-cliff
+        with:
+          config: cliff.toml
+          args: -vv --latest --strip header
+        env:
+          OUTPUT: CHANGES.md
+
+      - name: Release
+        uses: softprops/action-gh-release@v2.2.1
+        with:
+          body_path: CHANGES.md
