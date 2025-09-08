@@ -136,7 +136,20 @@ SEARCH_API_KEY=SECRET_KEY_YOU_CAN_USE_IN_FRONTEND_TO_AVOID_SPAM
 >
 > `SEARCH_API_KEY` can be used to add a layer of protection against bots that might spam the LLM, if not provided no API key will be needed to query the API.
 
-You can use the prebuild docker image `ghcr.io/eosc-data-commons/data-commons-mcp`
+You can use the prebuild docker image `ghcr.io/eosc-data-commons/data-commons-mcp:main`
+
+Example `compose.yml`:
+
+```yaml
+services:
+  mcp:
+    image: ghcr.io/eosc-data-commons/data-commons-mcp:main
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      OPENSEARCH_URL: "http://opensearch:9200"
+      MISTRAL_API_KEY: "${MISTRAL_API_KEY}"
+```
 
 Build and deploy the service:
 
