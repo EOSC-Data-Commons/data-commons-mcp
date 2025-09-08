@@ -58,3 +58,51 @@ jobs:
         with:
           body_path: CHANGES.md
         if: startsWith(github.ref, 'refs/tags/')
+
+  # release:
+  #   name: Build Release Binaries
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     matrix:
+  #       include:
+  #         - os: ubuntu-latest
+  #           target: x86_64-unknown-linux-gnu
+  #           artifact_name: data-commons-mcp
+  #           asset_name: data-commons-mcp-linux-amd64
+  #         - os: ubuntu-latest
+  #           target: aarch64-unknown-linux-gnu
+  #           artifact_name: data-commons-mcp
+  #           asset_name: data-commons-mcp-linux-arm64
+  #         - os: macos-latest
+  #           target: x86_64-apple-darwin
+  #           artifact_name: data-commons-mcp
+  #           asset_name: data-commons-mcp-macos-amd64
+  #         - os: macos-latest
+  #           target: aarch64-apple-darwin
+  #           artifact_name: data-commons-mcp
+  #           asset_name: data-commons-mcp-macos-arm64
+  #   steps:
+  #     - uses: actions/checkout@v5
+
+  #     # - name: Install Rust
+  #     #   uses: dtolnay/rust-toolchain@stable
+  #     #   with:
+  #     #     targets: ${{ matrix.target }}
+
+  #     - name: Install cross-compilation tools (Linux ARM64)
+  #       if: matrix.target == 'aarch64-unknown-linux-gnu'
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y gcc-aarch64-linux-gnu
+  #       # echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+  #     - name: Build binary
+  #       run: cargo build --release --target ${{ matrix.target }}
+  #       env:
+  #         CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+  #     - name: Upload artifacts
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: ${{ matrix.asset_name }}
+  #         path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}

@@ -52,6 +52,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64,linux/arm64/v8
           push: true
           tags: "ghcr.io/eosc-data-commons/data-commons-mcp:latest"
           # tags: "ghcr.io/${{ github.repository }}:latest"
