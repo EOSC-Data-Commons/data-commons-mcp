@@ -146,7 +146,7 @@ jobs:
 
       - name: Setup cross-compilation environment
         if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: sudo apt update && sudo apt install -y g++-aarch64-linux-gnu libssl-dev:arm64 pkg-config
+        run: sudo apt update && sudo apt install -y g++-aarch64-linux-gnu libssl-dev pkg-config
 
       - name: Add aarch64 linker
         if: matrix.target == 'aarch64-unknown-linux-gnu' || matrix.target == 'aarch64-apple-darwin'
