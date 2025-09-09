@@ -4,8 +4,7 @@ on:
   workflow_call:
   push:
     branches: [ main ]
-    tags:
-      - "v*.*.*"
+    tags: [ "v*.*.*" ]
   # pull_request:
 
 jobs:
@@ -24,7 +23,7 @@ jobs:
       #   env:
       #     MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
-  docker-build:
+  docker:
     name: 🐳 Build Docker ${{ matrix.platform }}
     runs-on: ubuntu-latest
     # strategy:
@@ -118,7 +117,7 @@ jobs:
   #         DOCKER_METADATA_OUTPUT_JSON: ${{ needs.docker-build.outputs.image-metadata }}
 
 
-  build_binaries:
+  build-binaries:
     name: 📦️ Build binaries for ${{ matrix.os }} (${{ matrix.target }})
     strategy:
       fail-fast: false
@@ -172,7 +171,7 @@ jobs:
         run: |
           mv target/${{ matrix.target }}/release/data-commons-mcp${{ matrix.os == 'windows' && '.exe' || '' }} data-commons-mcp_${{ matrix.target }}${{ matrix.os == 'windows' && '.exe' || '' }}
 
-      - uses: softprops/action-gh-release@v1
+      - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
@@ -200,6 +199,6 @@ jobs:
           OUTPUT: CHANGES.md
 
       - name: Release
-        uses: softprops/action-gh-release@v2.2.1
+        uses: softprops/action-gh-release@v2
         with:
           body_path: CHANGES.md

@@ -1747,8 +1747,8 @@ checksum = "241eaef5fd12c88705a01fc1066c48c4b36e0dd4377dcdc7ec3942cea7a69956"
 
 [[package]]
 name = "llm"
-version = "1.3.3"
-source = "git+https://github.com/vemonet/llm?branch=add-normalize-response#097fb4eabb3cffb443ee767823ab0346f35ced6f"
+version = "1.3.4"
+source = "git+https://github.com/graniet/llm?branch=main#e0378a2ed68e6efc93dd2a930c8a837ac893a242"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

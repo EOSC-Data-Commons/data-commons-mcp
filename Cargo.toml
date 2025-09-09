@@ -40,8 +40,8 @@ tracing-subscriber = { version = "0.3", features = [
     "std",
     "fmt",
 ] }
-llm = { git = "https://github.com/vemonet/llm", branch = "add-normalize-response", default-features = false, features = [
-    "rustls-tls", "mistral", "groq", "openai",
+llm = { git = "https://github.com/graniet/llm", branch = "main", default-features = false, features = [
+    "rustls-tls", "mistral", "openrouter", "openai", "groq",
 ] }
 opensearch = "2.3"
 fastembed = "5.1"
