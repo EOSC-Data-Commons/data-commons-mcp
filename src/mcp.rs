@@ -17,11 +17,18 @@ use utoipa::ToSchema;
 
 use crate::error::AppResult;
 
+// Behaviour of unemployed people on the labourmarket after 1950-01-01
+
+/// User question in natural language for searching relevant data
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct UserQuestion {
+    /// Question in natural language
     pub question: String,
+    /// Optional, if explicitly mentioned, start of the time period the question refers to (e.g. date, year), convert it to format yyyy-MM-dd
+    pub start_date: Option<String>,
+    /// Optional, if explicitly mentioned, end of the time period the question refers to (e.g. date, year), convert it to format yyyy-MM-dd
+    pub end_date: Option<String>,
     // pub topics: vec<String>, // potential topics and classes relevant to the query
-    // pub time: String, // time range relevant to the query
 }
 
 /// Structured response for search results
@@ -107,11 +114,39 @@ impl DataCommonsTools {
     #[tool(description = "Search for data relevant to the user question")]
     async fn search_data(
         &self,
-        Parameters(UserQuestion { question }): Parameters<UserQuestion>,
+        Parameters(UserQuestion {
+            question,
+            start_date,
+            end_date,
+        }): Parameters<UserQuestion>,
     ) -> Result<CallToolResult, McpError> {
-        // Build the OpenSearch query here
         let query_embedding = self.generate_embedding(&question).await?;
-        let query_body = json!({
+        let mut filters = Vec::new();
+
+        // Add date range filter if any date is specified
+        if start_date.is_some() || end_date.is_some() {
+            let mut date_range = json!({
+                "format": "yyyy-MM-dd"
+            });
+            if let Some(start) = start_date {
+                date_range["gte"] = json!(start);
+            }
+            if let Some(end) = end_date {
+                date_range["lte"] = json!(end);
+            }
+            filters.push(json!({
+                "nested": {
+                    "path": "dates",
+                    "query": {
+                        "range": {
+                            "dates.date": date_range
+                        }
+                    }
+                }
+            }));
+        }
+
+        let mut query_body = json!({
             "_source": ["titles.title", "subjects.subject", "descriptions.description", "url", "doi", "dates", "publicationYear"],
             "query": {
                 "knn": {
@@ -122,51 +157,15 @@ impl DataCommonsTools {
                 }
             }
         });
-        // let query_body = json!({
-        //     "query": {
-        //         "query_string": {
-        //             "default_operator": "AND",
-        //             "default_field": "_all_fields",
-        //             "query": question,
-        //             // "query": format!("*{question}*"),
-        //         }
-        //     }
-        // });
-
-        // let query_body = json!({
-        //     "query": {
-        //         "bool": {
-        //             "filter": [
-        //                 {"term": {"format": "CSV"}}
-        //             ],
-        //             "must": {
-        //                 "knn": {
-        //                     "embedding": {
-        //                         "vector": query_embedding,
-        //                         "k": 5
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //     }
-        // });
-        // Or nested field to have multiple embeddings per document
-        // {
-        //     "query": {
-        //         "nested": {
-        //             "path": "my_vectors",
-        //             "query": {
-        //                 "knn": {
-        //                     "my_vectors.vector": {
-        //                         "vector": query_embedding,
-        //                         "k": 10
-        //                     }
-        //                 }
-        //             },
-        //             "score_mode": "max"
-        //         }
-        //     }
-        // }
+        if !filters.is_empty() {
+            // Add filters to the query if any
+            query_body["query"]["knn"]["emb"]["filter"] = json!({
+                "bool": {
+                    "must": filters
+                }
+            });
+        }
+        // tracing::debug!("OpenSearch query body: {query_body}");
 
         // Execute the OpenSearch request
         let response = self
@@ -275,6 +274,8 @@ impl DataCommonsTools {
         &self,
         Parameters(UserQuestion {
             question: _question,
+            start_date: _start_date,
+            end_date: _end_date,
         }): Parameters<UserQuestion>,
     ) -> Result<CallToolResult, McpError> {
         // TODO: implement
