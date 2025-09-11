@@ -91,6 +91,16 @@ pub fn get_llm_config(model: &str) -> Result<(LLMBackend, String, String), Strin
                 Err("MISTRAL_API_KEY environment variable not set".to_string())
             }
         }
+        "openrouter" => {
+            if std::env::var("OPENROUTER_API_KEY").is_ok() {
+                match std::env::var("OPENROUTER_API_KEY") {
+                    Ok(key) => Ok((LLMBackend::OpenRouter, key)),
+                    Err(_) => Err("OPENROUTER_API_KEY environment variable not set".to_string()),
+                }
+            } else {
+                Err("OPENROUTER_API_KEY environment variable not set".to_string())
+            }
+        }
         "groq" => {
             if std::env::var("GROQ_API_KEY").is_ok() {
                 match std::env::var("GROQ_API_KEY") {

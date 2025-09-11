@@ -221,8 +221,11 @@ impl SearchWorkflow {
                     )
                 }
                 Err(e) => {
-                    tracing::error!("Chat error: {}", e);
-                    return Err(AppError::Llm(e.to_string()));
+                    // Stream error as message
+                    (
+                        e.to_string(),
+                        None,
+                    )
                 }
             };
 
@@ -285,7 +288,6 @@ impl SearchWorkflow {
                 }
             }
         }
-
         Ok((response_text, tool_calls, search_results))
     }
 
@@ -349,8 +351,9 @@ impl SearchWorkflow {
         let response_text = match llm_resolution.chat(&chat_messages).await {
             Ok(response) => response.text().unwrap_or_default().to_string(),
             Err(e) => {
-                tracing::error!("Chat error: {e}");
-                return Err(AppError::Llm(e.to_string()));
+                tracing::error!("Chat error!!!: {e}");
+                // return Err(AppError::Llm(e.to_string()));
+                e.to_string()
             }
         };
 

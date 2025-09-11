@@ -10,7 +10,6 @@ WORKDIR /app
 # Might need some flags, see https://crates.io/crates/ort
 # ENV RUSTFLAGS="-Clink-args=-Wl,-rpath,\$ORIGIN"
 
-# RUN cargo build --release
 RUN --mount=type=cache,target=/root/.cargo cargo build --release
 
 
