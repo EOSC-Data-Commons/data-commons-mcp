@@ -214,7 +214,7 @@ impl SearchWorkflow {
         let (response_text, tool_calls) =
             match llm.chat_with_tools(&chat_messages, llm.tools()).await {
                 Ok(response) => {
-                    tracing::debug!("LLM tool call response: {response:#?}");
+                    // tracing::debug!("LLM tool call response: {response:#?}");
                     (
                         response.text().unwrap_or_default().to_string(),
                         response.tool_calls(),
@@ -233,7 +233,6 @@ impl SearchWorkflow {
             total_found: 0,
             hits: vec![],
         };
-
         // Execute each tool call if any
         if let Some(tc) = &tool_calls {
             for call in tc {
@@ -580,7 +579,7 @@ fn create_search_stream(
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Tool call execution failed: {:?}", e);
-                yield Ok(send_error_event("Error searching for datasets")?);
+                yield Ok(send_error_event(&format!("Error searching for datasets: {e}"))?);
                 return;
             }
         };
@@ -627,9 +626,9 @@ fn create_search_stream(
         // Step 2: Generate and stream summary and scores using LLM
         let final_response = match workflow.generate_summary_and_scores(&resp.messages, search_results).await {
             Ok(response) => response,
-            Err(_) => {
+            Err(e) => {
                 // Fallback if LLM processing fails
-                yield Ok(send_error_event("Error processing search results")?);
+                yield Ok(send_error_event(&format!("{e}"))?);
                 return;
             }
         };
