@@ -2,7 +2,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use llm::builder::{LLMBackend, LLMBuilder};
+use llm::builder::LLMBackend;
 use serde::Serialize;
 
 use crate::chat::{ApiChatMessage, ChatSearchResponse};

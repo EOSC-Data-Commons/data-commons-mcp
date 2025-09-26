@@ -98,7 +98,8 @@ pub async fn build_router(args: &Args) -> AppResult<axum::Router> {
             .with_state(app_state)
             .split_for_parts();
         router
-            .fallback_service(webapp_service)
+            .fallback_service(webapp_service.clone())
+            .nest_service("/search", webapp_service)
             .nest_service("/mcp", mcp_service)
             .merge(SwaggerUi::new("/docs").url("/openapi.json", api))
             .layer(cors)

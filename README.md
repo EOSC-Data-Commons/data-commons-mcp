@@ -83,6 +83,12 @@ cargo watch -x run
 > - `groq/moonshotai/kimi-k2-instruct`
 > - `einfracz/qwen3-coder`
 
+To build and integrate the frontend web app to the server, from the [frontend folder](https://github.com/EOSC-Data-Commons/eoscdcpoc) run:
+
+```sh
+npm run build && rm -rf ../data-commons-mcp/src/webapp/ && cp -R dist/spa/ ../data-commons-mcp/src/webapp/
+```
+
 ### 🔌 Connect MCP client
 
 Follow the instructions of your client, and use the `/mcp` URL of your deployed server (e.g. http://localhost:8000/mcp)
@@ -209,3 +215,4 @@ Create release:
 ```sh
 cargo release patch --execute
 ```
+
