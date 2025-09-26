@@ -70,7 +70,9 @@ pub fn get_llm_config(model: &str) -> Result<(LLMBackend, String, String, Option
         [single] => (single.to_string(), single.to_string()),
         _ => ("openai".to_string(), model.to_string()), // fallback
     };
-    let backend_result: Result<(LLMBackend, String, Option<String>), String> = match provider.as_str() {
+    let backend_result: Result<(LLMBackend, String, Option<String>), String> = match provider
+        .as_str()
+    {
         "openai" => {
             if std::env::var("OPENAI_API_KEY").is_ok() {
                 match std::env::var("OPENAI_API_KEY") {
@@ -94,7 +96,11 @@ pub fn get_llm_config(model: &str) -> Result<(LLMBackend, String, String, Option
         "einfracz" => {
             if std::env::var("EINFRACZ_API_KEY").is_ok() {
                 match std::env::var("EINFRACZ_API_KEY") {
-                    Ok(key) => Ok((LLMBackend::Groq, key, Some("https://chat.ai.e-infra.cz/api/v1/".to_string()))),
+                    Ok(key) => Ok((
+                        LLMBackend::Groq,
+                        key,
+                        Some("https://chat.ai.e-infra.cz/api/v1/".to_string()),
+                    )),
                     Err(_) => Err("EINFRACZ_API_KEY environment variable not set".to_string()),
                 }
             } else {

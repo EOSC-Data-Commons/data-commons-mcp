@@ -229,10 +229,7 @@ impl SearchWorkflow {
                 }
                 Err(e) => {
                     // Stream error as message
-                    (
-                        e.to_string(),
-                        None,
-                    )
+                    (e.to_string(), None)
                 }
             };
 
@@ -354,8 +351,7 @@ impl SearchWorkflow {
             llm_builder = llm_builder.base_url(url);
         }
 
-        let llm_resolution = llm_builder.build()
-            .expect("Failed to build LLM client");
+        let llm_resolution = llm_builder.build().expect("Failed to build LLM client");
 
         // Send chat request using additional infos retrieved by the tool call
         let response_text = match llm_resolution.chat(&chat_messages).await {
