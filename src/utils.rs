@@ -2,7 +2,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use llm::builder::LLMBackend;
+use llm::builder::{LLMBackend, LLMBuilder};
 use serde::Serialize;
 
 use crate::error::{AppError, AppResult};
@@ -62,7 +62,7 @@ impl SearchLog {
 
 /// Determines the LLM backend and API key based on available environment variables
 /// OpenAI takes priority if both are available
-pub fn get_llm_config(model: &str) -> Result<(LLMBackend, String, String), String> {
+pub fn get_llm_config(model: &str) -> Result<(LLMBackend, String, String, Option<String>), String> {
     // Parse provider/model_name from input
     let parts: Vec<&str> = model.splitn(2, '/').collect();
     let (provider, model_name) = match parts.as_slice() {
@@ -70,11 +70,11 @@ pub fn get_llm_config(model: &str) -> Result<(LLMBackend, String, String), Strin
         [single] => (single.to_string(), single.to_string()),
         _ => ("openai".to_string(), model.to_string()), // fallback
     };
-    let backend_result = match provider.as_str() {
+    let backend_result: Result<(LLMBackend, String, Option<String>), String> = match provider.as_str() {
         "openai" => {
             if std::env::var("OPENAI_API_KEY").is_ok() {
                 match std::env::var("OPENAI_API_KEY") {
-                    Ok(key) => Ok((LLMBackend::OpenAI, key)),
+                    Ok(key) => Ok((LLMBackend::OpenAI, key, None)),
                     Err(_) => Err("OPENAI_API_KEY environment variable not set".to_string()),
                 }
             } else {
@@ -84,17 +84,27 @@ pub fn get_llm_config(model: &str) -> Result<(LLMBackend, String, String), Strin
         "mistralai" => {
             if std::env::var("MISTRAL_API_KEY").is_ok() {
                 match std::env::var("MISTRAL_API_KEY") {
-                    Ok(key) => Ok((LLMBackend::Mistral, key)),
+                    Ok(key) => Ok((LLMBackend::Mistral, key, None)),
                     Err(_) => Err("MISTRAL_API_KEY environment variable not set".to_string()),
                 }
             } else {
                 Err("MISTRAL_API_KEY environment variable not set".to_string())
             }
         }
+        "einfracz" => {
+            if std::env::var("EINFRACZ_API_KEY").is_ok() {
+                match std::env::var("EINFRACZ_API_KEY") {
+                    Ok(key) => Ok((LLMBackend::Groq, key, Some("https://chat.ai.e-infra.cz/api/v1/".to_string()))),
+                    Err(_) => Err("EINFRACZ_API_KEY environment variable not set".to_string()),
+                }
+            } else {
+                Err("EINFRACZ_API_KEY environment variable not set".to_string())
+            }
+        }
         "openrouter" => {
             if std::env::var("OPENROUTER_API_KEY").is_ok() {
                 match std::env::var("OPENROUTER_API_KEY") {
-                    Ok(key) => Ok((LLMBackend::OpenRouter, key)),
+                    Ok(key) => Ok((LLMBackend::OpenRouter, key, None)),
                     Err(_) => Err("OPENROUTER_API_KEY environment variable not set".to_string()),
                 }
             } else {
@@ -104,7 +114,7 @@ pub fn get_llm_config(model: &str) -> Result<(LLMBackend, String, String), Strin
         "groq" => {
             if std::env::var("GROQ_API_KEY").is_ok() {
                 match std::env::var("GROQ_API_KEY") {
-                    Ok(key) => Ok((LLMBackend::Groq, key)),
+                    Ok(key) => Ok((LLMBackend::Groq, key, None)),
                     Err(_) => Err("GROQ_API_KEY environment variable not set".to_string()),
                 }
             } else {
@@ -113,8 +123,9 @@ pub fn get_llm_config(model: &str) -> Result<(LLMBackend, String, String), Strin
         }
         _ => Err(format!("Unknown provider: {provider}")),
     };
+
     match backend_result {
-        Ok((backend, api_key)) => Ok((backend, api_key, model_name)),
+        Ok((backend, api_key, base_url)) => Ok((backend, api_key, model_name, base_url)),
         Err(e) => Err(e),
     }
 }

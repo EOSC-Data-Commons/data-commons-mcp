@@ -122,6 +122,17 @@ impl DataCommonsTools {
     ) -> Result<CallToolResult, McpError> {
         let query_embedding = self.generate_embedding(&question).await?;
         let mut filters = Vec::new();
+        // Add filter to only search for `Dataset` resource type
+        filters.push(json!({
+            "nested": {
+                "path": "types",
+                "query": {
+                    "term": {
+                        "types.resourceTypeGeneral": "Dataset"
+                    }
+                }
+            }
+        }));
 
         // Add date range filter if any date is specified
         if start_date.is_some() || end_date.is_some() {

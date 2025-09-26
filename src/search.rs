@@ -34,13 +34,15 @@ const SYSTEM_PROMPT_RESOLUTION: &str = r#"You are an assistant that help users f
 Given the user question and datasets retrieved from the search API, summarize the findings in 1 sentence,
 extract which datasets might be the most interesting to answer the user question, and give them a relevance score between 0 and 1
 "#;
+// TODO: your goal is to answer questions about data, nothing else
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct SearchInput {
     pub messages: Vec<ApiChatMessage>,
     // #[schema(example = "groq/moonshotai/kimi-k2-instruct")]
     // #[schema(example = "openai/gpt-4.1-nano")]
-    #[schema(example = "mistralai/mistral-small-latest")]
+    #[schema(example = "einfracz/qwen3-coder")]
+    // #[schema(example = "mistralai/mistral-small-latest")]
     pub model: String,
     #[serde(default)]
     pub stream: bool,
@@ -140,10 +142,11 @@ pub struct SearchWorkflow {
     pub llm_backend: LLMBackend,
     pub llm_api_key: String,
     pub llm_model: String,
+    pub llm_url: Option<String>,
     pub msg_id: String,
     pub created: u64,
 }
-// args.bind_address
+
 impl SearchWorkflow {
     /// Initialize a new search workflow (query LLM with MCP tools)
     pub async fn new(model: String, bind_address: String) -> AppResult<Self> {
@@ -169,13 +172,14 @@ impl SearchWorkflow {
                 )));
             }
         };
-        let (llm_backend, llm_api_key, llm_model) =
+        let (llm_backend, llm_api_key, llm_model, llm_url) =
             get_llm_config(&model).map_err(AppError::Llm)?;
         Ok(Self {
             mcp_client: client,
             llm_backend,
             llm_api_key,
             llm_model,
+            llm_url,
             msg_id,
             created,
         })
@@ -198,6 +202,9 @@ impl SearchWorkflow {
             .max_tokens(1024)
             .temperature(0.1)
             .system(SYSTEM_PROMPT_TOOLS);
+        if let Some(url) = &self.llm_url {
+            llm_builder = llm_builder.base_url(url);
+        }
 
         // Convert MCP tools to LLM functions and add them to the llm builder
         let tools = self.mcp_client.list_tools(Default::default()).await?;
@@ -335,15 +342,19 @@ impl SearchWorkflow {
 
         // Create LLM client with structured output schema
         let schema: StructuredOutputFormat = serde_json::from_str(SEARCH_OUTPUT_SCHEMA)?;
-        let llm_resolution = LLMBuilder::new()
+        let mut llm_builder = LLMBuilder::new()
             .backend(self.llm_backend.clone())
             .api_key(&self.llm_api_key)
             .model(&self.llm_model)
             .max_tokens(512)
             .temperature(0.1)
             .system(SYSTEM_PROMPT_RESOLUTION)
-            .schema(schema)
-            .build()
+            .schema(schema);
+        if let Some(url) = &self.llm_url {
+            llm_builder = llm_builder.base_url(url);
+        }
+
+        let llm_resolution = llm_builder.build()
             .expect("Failed to build LLM client");
 
         // Send chat request using additional infos retrieved by the tool call
