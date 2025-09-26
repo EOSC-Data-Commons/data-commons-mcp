@@ -17,7 +17,7 @@ The HTTP API comprises 2 main endpoints:
     - [ ] Search tools
     - [ ] Search citations related to datasets or tools
 
-- `/search`: **HTTP POST** endpoint (JSON) for querying the MCP server via an LLM provider with streaming response
+- `/chat`: **HTTP POST** endpoint (JSON) for chatting with the MCP server tools via an LLM provider with streaming response
   - Uses [`axum`](https://github.com/tokio-rs/axum), [`utoipa`](https://github.com/juhaku/utoipa) for OpenAPI spec generation, [`llm`](https://github.com/graniet/llm) to interact with LLM providers (e.g. [Mistral](https://admin.mistral.ai/organization/api-keys), OpenAI)
   - Returns a streaming response: tool call requested, then tool call results, and final search results.
 
@@ -73,7 +73,7 @@ cargo watch -x run
 > Example `curl` request:
 >
 > ```sh
-> curl -X POST http://localhost:8000/search -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "data insulin"}], "model": "mistralai/mistral-small-latest", "stream": true}'
+> curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "data insulin"}], "model": "mistralai/mistral-small-latest", "stream": true}'
 > ```
 >
 > Recommended model per supported provider:
@@ -81,6 +81,7 @@ cargo watch -x run
 > - `openai/gpt-4.1`
 > - `mistralai/mistral-large-latest`
 > - `groq/moonshotai/kimi-k2-instruct`
+> - `einfracz/qwen3-coder`
 
 ### 🔌 Connect MCP client
 

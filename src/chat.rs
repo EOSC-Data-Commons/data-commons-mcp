@@ -37,7 +37,7 @@ extract which datasets might be the most interesting to answer the user question
 // TODO: your goal is to answer questions about data, nothing else
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct SearchInput {
+pub struct ChatInput {
     pub messages: Vec<ApiChatMessage>,
     // #[schema(example = "groq/moonshotai/kimi-k2-instruct")]
     // #[schema(example = "openai/gpt-4.1-nano")]
@@ -49,7 +49,7 @@ pub struct SearchInput {
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema, Clone)]
-pub struct SearchResponse {
+pub struct ChatSearchResponse {
     pub hits: Vec<SearchHit>,
     pub summary: String,
     // pub usage: Option<UsageInfo>,
@@ -299,7 +299,7 @@ impl SearchWorkflow {
         &self,
         messages: &[ApiChatMessage],
         search_results: McpSearchResult,
-    ) -> AppResult<SearchResponse> {
+    ) -> AppResult<ChatSearchResponse> {
         if search_results.total_found == 0 || search_results.hits.is_empty() {
             return Err(AppError::NoDataFound(
                 "No datasets found for your query.".to_string(),
@@ -393,7 +393,7 @@ impl SearchWorkflow {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        Ok(SearchResponse {
+        Ok(ChatSearchResponse {
             hits: search_results.hits,
             summary: llm_response.summary,
         })
@@ -445,7 +445,7 @@ impl SearchWorkflow {
         &self,
         stream: bool,
         conversation: Vec<ApiChatMessage>,
-        response: SearchResponse,
+        response: ChatSearchResponse,
         execution_time_ms: u64,
     ) {
         let search_log = SearchLog::new(
@@ -503,35 +503,35 @@ const SEARCH_OUTPUT_SCHEMA: &str = r#"
 /// Search data relevant to a user question in a conversation
 #[utoipa::path(
     post,
-    path = "/search",
-    request_body(content = SearchInput, description = "List of messages in the chat"),
+    path = "/chat",
+    request_body(content = ChatInput, description = "Chat input object"),
     responses(
-        (status = 200, description = "Search results", body = SearchResponse),
-        (status = 200, description = "Search results (SSE stream)", content_type = "text/event-stream", body = StreamChunk),
+        (status = 200, description = "Chat results", body = ChatSearchResponse),
+        (status = 200, description = "Chat results (SSE stream)", content_type = "text/event-stream", body = StreamChunk),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
 )]
-pub async fn search_handler(
+pub async fn chat_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(resp): Json<SearchInput>,
+    Json(resp): Json<ChatInput>,
 ) -> Response {
     if resp.stream {
-        streaming_search_handler(headers, resp, state)
+        streaming_chat_handler(headers, resp, state)
             .await
             .into_response()
     } else {
-        regular_search_handler(headers, resp, state)
+        regular_chat_handler(headers, resp, state)
             .await
             .into_response()
     }
 }
 
 /// Streaming search handler for SSE responses
-async fn streaming_search_handler(
+async fn streaming_chat_handler(
     headers: HeaderMap,
-    resp: SearchInput,
+    resp: ChatInput,
     state: AppState,
 ) -> impl IntoResponse {
     // Validate API key only if SEARCH_API_KEY is set
@@ -546,7 +546,7 @@ async fn streaming_search_handler(
                 .into_response();
         }
     }
-    let stream = create_search_stream(resp, state);
+    let stream = create_chat_stream(resp, state);
     Sse::new(stream)
         // .keep_alive(
         //     sse::KeepAlive::new()
@@ -566,8 +566,8 @@ fn send_error_event(error_message: &str) -> AppResult<sse::Event> {
 }
 
 /// Create a streaming search response
-fn create_search_stream(
-    resp: SearchInput,
+fn create_chat_stream(
+    resp: ChatInput,
     state: AppState,
 ) -> impl Stream<Item = AppResult<sse::Event>> {
     async_stream::stream! {
@@ -597,7 +597,7 @@ fn create_search_stream(
             let execution_time = start_time.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
             if tool_calls.is_none() {
                 // Direct response without tool calls
-                let response = SearchResponse {
+                let response = ChatSearchResponse {
                     hits: vec![],
                     summary: response_txt,
                 };
@@ -613,7 +613,7 @@ fn create_search_stream(
                 );
             } else {
                 // No results found
-                let response = SearchResponse {
+                let response = ChatSearchResponse {
                     hits: vec![],
                     summary: "Nothing found for your query.".to_string(),
                 };
@@ -654,9 +654,9 @@ fn create_search_stream(
 }
 
 /// Search handler for non-streaming responses
-async fn regular_search_handler(
+async fn regular_chat_handler(
     headers: HeaderMap,
-    resp: SearchInput,
+    resp: ChatInput,
     state: AppState,
 ) -> impl IntoResponse {
     let start_time = SystemTime::now();
@@ -700,7 +700,7 @@ async fn regular_search_handler(
             .elapsed()
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let final_response = SearchResponse {
+        let final_response = ChatSearchResponse {
             hits: vec![],
             summary: "No datasets found for your query.".to_string(),
         };
@@ -722,7 +722,7 @@ async fn regular_search_handler(
         Err(e) => {
             tracing::error!("LLM processing failed: {e:?}");
             // Fallback response without scoring
-            SearchResponse {
+            ChatSearchResponse {
                 hits: vec![],
                 summary: format!(
                     "Found datasets for your query, but could not process relevance scores. {e:?}"

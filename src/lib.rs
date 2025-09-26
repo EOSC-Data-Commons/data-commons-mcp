@@ -10,9 +10,9 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use utoipa_swagger_ui::SwaggerUi;
 
+mod chat;
 mod error;
 mod mcp;
-mod search;
 mod utils;
 use crate::error::AppResult;
 use crate::mcp::DataCommonsTools;
@@ -94,7 +94,7 @@ pub async fn build_router(args: &Args) -> AppResult<axum::Router> {
     } else {
         // Default mode includes a search endpoint and OpenAPI docs
         let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
-            .routes(routes!(search::search_handler))
+            .routes(routes!(chat::chat_handler))
             .with_state(app_state)
             .split_for_parts();
         router

@@ -1,9 +1,9 @@
 use clap::Parser;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+pub mod chat;
 pub mod error;
 pub mod mcp;
-pub mod search;
 pub mod utils;
 use data_commons_mcp::{AppState, Args, build_router};
 use error::AppResult;

@@ -5,8 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use llm::builder::{LLMBackend, LLMBuilder};
 use serde::Serialize;
 
+use crate::chat::{ApiChatMessage, ChatSearchResponse};
 use crate::error::{AppError, AppResult};
-use crate::search::{ApiChatMessage, SearchResponse};
 
 /// Structure for logging search conversations and responses
 #[derive(Debug, Serialize)]
@@ -16,7 +16,7 @@ pub struct SearchLog {
     model: String,
     stream: bool,
     conversation: Vec<ApiChatMessage>,
-    response: SearchResponse,
+    response: ChatSearchResponse,
     execution_time_ms: u64,
 }
 
@@ -26,7 +26,7 @@ impl SearchLog {
         model: String,
         stream: bool,
         conversation: Vec<ApiChatMessage>,
-        response: SearchResponse,
+        response: ChatSearchResponse,
         execution_time_ms: u64,
     ) -> Self {
         let timestamp = SystemTime::now()
