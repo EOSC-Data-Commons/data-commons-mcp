@@ -1,0 +1,9 @@
+# Ignore build artifacts
+target/
+# Ignore git history
+.git/
+# Ignore local environment files
+keys.env
+# Ignore JetBrains files
+.idea/
+

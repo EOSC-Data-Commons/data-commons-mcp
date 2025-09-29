@@ -4,3 +4,5 @@
 .DS_Store
 .fastembed_cache
 *.env
+
+/.idea
