@@ -39,12 +39,15 @@ async fn main() -> AppResult<()> {
         tracing::info!("Shutting down...");
     };
     tracing::info!(
-        "Starting Streamable HTTP MCP server at http://{}/mcp, {}with OpenSearch at {}",
+        "⚡️ Starting Streamable HTTP MCP server at http://{}/mcp\n{}  🔎 Using OpenSearch at {}",
         args.bind_address,
         if args.mcp_only {
             "".to_string()
         } else {
-            format!("OpenAPI UI at http://{}/docs, ", args.bind_address)
+            format!(
+                "  💬 Chat UI at http://{}\n  📚 OpenAPI docs at http://{}/docs\n",
+                args.bind_address, args.bind_address
+            )
         },
         args.opensearch_url
     );

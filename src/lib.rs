@@ -21,6 +21,15 @@ use crate::mcp::DataCommonsTools;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
+    /// Address where to deploy this MCP endpoint
+    #[arg(
+        short = 'b',
+        long = "bind",
+        env = "BIND_ADDRESS",
+        default_value = "0.0.0.0:8000"
+    )]
+    pub bind_address: String,
+
     /// OpenSearch URL
     #[arg(
         short = 's',
@@ -30,18 +39,13 @@ pub struct Args {
     )]
     pub opensearch_url: String,
 
-    /// Only deploy the MCP endpoint without the search endpoint
+    /// Only deploy the MCP endpoint without the chat search endpoint
     #[arg(long = "mcp-only", env = "MCP_ONLY", default_value_t = false)]
     pub mcp_only: bool,
 
-    /// Address where to deploy this MCP endpoint
-    #[arg(
-        short = 'b',
-        long = "bind",
-        env = "BIND_ADDRESS",
-        default_value = "0.0.0.0:8000"
-    )]
-    pub bind_address: String,
+    /// Enable CORS to allow requests from any origin (useful in dev with local webapps)
+    #[arg(long = "cors", env = "CORS_ENABLED", default_value_t = false)]
+    pub cors: bool,
 }
 
 /// OpenAPI documentation for the API
@@ -71,11 +75,6 @@ pub async fn build_router(args: &Args) -> AppResult<axum::Router> {
     let app_state = AppState {
         bind_address: args.bind_address.clone(),
     };
-    // Enable CORS to query the server from client webapps
-    let cors = CorsLayer::new().allow_origin(Any).allow_headers([
-        axum::http::header::AUTHORIZATION,
-        axum::http::header::CONTENT_TYPE,
-    ]);
 
     // Serve the webapp static files on /
     let webapp_service =
@@ -86,11 +85,10 @@ pub async fn build_router(args: &Args) -> AppResult<axum::Router> {
             )
         });
 
-    let router = if args.mcp_only {
+    let mut router = if args.mcp_only {
         // MCP-only mode: just serve the MCP endpoint
         axum::Router::new()
             .nest_service("/mcp", mcp_service)
-            .layer(cors)
     } else {
         // Default mode includes a search endpoint and OpenAPI docs
         let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
@@ -98,11 +96,48 @@ pub async fn build_router(args: &Args) -> AppResult<axum::Router> {
             .with_state(app_state)
             .split_for_parts();
         router
-            .fallback_service(webapp_service.clone())
-            .nest_service("/search", webapp_service)
+            .fallback_service(webapp_service.clone()) // Serve root /
+            .nest_service("/search", webapp_service) // Handle UI search
             .nest_service("/mcp", mcp_service)
             .merge(SwaggerUi::new("/docs").url("/openapi.json", api))
-            .layer(cors)
+            // .fallback(spa_fallback) // SPA fallback for client-side routing
     };
+    // Apply CORS layer if enabled
+    if args.cors {
+        router = router.layer(CorsLayer::new().allow_origin(Any).allow_headers([
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::CONTENT_TYPE,
+        ]));
+    }
     Ok(router)
 }
+
+// /// SPA fallback handler that serves index.html for non-JS file requests
+// async fn spa_fallback(
+//     uri: axum::http::Uri,
+// ) -> Result<axum::response::Html<String>, axum::http::StatusCode> {
+//     let path = uri.path();
+
+//     // Don't serve index.html for JS/CSS/asset files - let them 404
+//     if path.ends_with(".js")
+//         || path.ends_with(".css")
+//         || path.ends_with(".map")
+//         || path.ends_with(".ico")
+//         || path.ends_with(".png")
+//         || path.ends_with(".svg")
+//         || path.ends_with(".jpg")
+//         || path.ends_with(".jpeg")
+//         || path.ends_with(".gif")
+//         || path.ends_with(".woff")
+//         || path.ends_with(".woff2")
+//         || path.ends_with(".ttf")
+//     {
+//         return Err(axum::http::StatusCode::NOT_FOUND);
+//     }
+
+//     // For all other paths, try to serve index.html
+//     match tokio::fs::read_to_string("src/webapp/index.html").await {
+//         Ok(content) => Ok(axum::response::Html(content)),
+//         Err(_) => Err(axum::http::StatusCode::NOT_FOUND),
+//     }
+// }

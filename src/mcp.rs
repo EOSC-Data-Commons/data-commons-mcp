@@ -107,10 +107,6 @@ impl DataCommonsTools {
         Ok(embeddings[0].clone())
     }
 
-    fn _create_resource_text(&self, uri: &str, name: &str) -> Resource {
-        RawResource::new(uri, name.to_string()).no_annotation()
-    }
-
     #[tool(description = "Search for data relevant to the user question")]
     async fn search_data(
         &self,
@@ -199,7 +195,6 @@ impl DataCommonsTools {
                 tracing::debug!("MCP OpenSearch JSON response: {resp_json:?}");
                 let empty_hits = vec![];
                 let hits_array = resp_json["hits"]["hits"].as_array().unwrap_or(&empty_hits);
-                // tracing::debug!("{hits_array:?}");
                 // Convert OpenSearch hits to our own SearchHit struct
                 let hits: Vec<SearchHit> = hits_array
                     .iter()
@@ -340,7 +335,7 @@ impl ServerHandler for DataCommonsTools {
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         Ok(ListResourcesResult {
-            resources: vec![self._create_resource_text("meta://repositories", "zenodo")],
+            resources: vec![RawResource::new("meta://repositories", "zenodo".to_string()).no_annotation()],
             next_cursor: None,
         })
     }

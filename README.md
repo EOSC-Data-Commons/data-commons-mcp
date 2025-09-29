@@ -59,7 +59,7 @@ cargo run
 Customize server configuration through CLI arguments:
 
 ```sh
-cargo run -- --mcp-only --opensearch-url http://localhost:9200
+cargo run --  --mcp-only -b 0.0.0.0:8004 --opensearch-url http://localhost:9200
 ```
 
 Run and reload on change to the code:

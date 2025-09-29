@@ -7,6 +7,7 @@ sequenceDiagram
         participant MCP as MCP server
         participant OpenSearch
         participant LLM
+        participant Tool as Tool Registry
         User->>UI: Search in natural language
         activate User
         activate UI
@@ -24,6 +25,10 @@ sequenceDiagram
         activate LLM
         LLM-->>MCP: Return scored datasets and summary in natural language
         deactivate LLM
+        MCP->>Tool: Get relevant tools for ranked datasets 
+        activate Tool
+        Tool-->>MCP: Return relevant tools for ranked datasets
+        deactivate Tool
         MCP-->>UI: Stream search results
         deactivate MCP
         UI-->>User: Display search results
