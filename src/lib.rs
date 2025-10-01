@@ -87,8 +87,7 @@ pub async fn build_router(args: &Args) -> AppResult<axum::Router> {
 
     let mut router = if args.mcp_only {
         // MCP-only mode: just serve the MCP endpoint
-        axum::Router::new()
-            .nest_service("/mcp", mcp_service)
+        axum::Router::new().nest_service("/mcp", mcp_service)
     } else {
         // Default mode includes a search endpoint and OpenAPI docs
         let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
@@ -100,7 +99,7 @@ pub async fn build_router(args: &Args) -> AppResult<axum::Router> {
             .nest_service("/search", webapp_service) // Handle UI search
             .nest_service("/mcp", mcp_service)
             .merge(SwaggerUi::new("/docs").url("/openapi.json", api))
-            // .fallback(spa_fallback) // SPA fallback for client-side routing
+        // .fallback(spa_fallback) // SPA fallback for client-side routing
     };
     // Apply CORS layer if enabled
     if args.cors {

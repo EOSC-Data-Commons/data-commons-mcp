@@ -89,7 +89,6 @@ impl DataCommonsTools {
         let mut model = self.embedding_model.lock().await;
         let embeddings = model
             .embed(vec![format!("passage: {}", text)], None)
-            // TODO: use rmcp::ErrorData
             .map_err(|e| {
                 ErrorData::new(
                     ErrorCode(500),
@@ -154,7 +153,7 @@ impl DataCommonsTools {
         }
 
         let mut query_body = json!({
-            "_source": ["titles.title", "subjects.subject", "descriptions.description", "url", "doi", "dates", "publicationYear"],
+            "_source": ["titles.title", "subjects.subject", "descriptions.description", "url", "doi", "dates", "publicationYear", "creators"],
             "query": {
                 "knn": {
                     "emb": {
@@ -335,7 +334,9 @@ impl ServerHandler for DataCommonsTools {
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         Ok(ListResourcesResult {
-            resources: vec![RawResource::new("meta://repositories", "zenodo".to_string()).no_annotation()],
+            resources: vec![
+                RawResource::new("meta://repositories", "zenodo".to_string()).no_annotation(),
+            ],
             next_cursor: None,
         })
     }

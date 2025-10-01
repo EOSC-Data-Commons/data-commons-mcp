@@ -10,14 +10,14 @@ It uses a search API, and a Large Language Model (LLM) to help users find the da
 
 The HTTP API comprises 2 main endpoints:
 
-- `/mcp`: **MCP server** that searches for relevant data to answer a user question using the EOSC Data Commons search API
+- `/mcp`: **MCP server** that searches for relevant data to answer a user question using the EOSC Data Commons OpenSearch service
   - Uses [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) with Streamable HTTP transport
   - Available tools:
     - [x] Search datasets
     - [ ] Search tools
     - [ ] Search citations related to datasets or tools
 
-- `/chat`: **HTTP POST** endpoint (JSON) for chatting with the MCP server tools via an LLM provider with streaming response
+- `/chat`: **HTTP POST** endpoint (JSON) for chatting with the MCP server tools via an LLM provider (API key provided through env variable at deployment)
   - Uses [`axum`](https://github.com/tokio-rs/axum), [`utoipa`](https://github.com/juhaku/utoipa) for OpenAPI spec generation, [`llm`](https://github.com/graniet/llm) to interact with LLM providers (e.g. [Mistral](https://admin.mistral.ai/organization/api-keys), OpenAI)
   - Returns a streaming response: tool call requested, then tool call results, and final search results.
 
