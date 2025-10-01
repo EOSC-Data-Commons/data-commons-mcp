@@ -6,8 +6,11 @@ use axum::{
     response::{IntoResponse, Response, Sse},
 };
 use futures_util::stream::Stream;
+use llm::ToolCall;
+use rmcp::model::CallToolResult;
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use serde_json::json;
+use std::time::SystemTime;
 use utoipa::ToSchema;
 
 use llm::{
@@ -43,7 +46,7 @@ pub struct ChatInput {
     // #[schema(example = "openai/gpt-4.1-nano")]
     #[schema(example = "einfracz/qwen3-coder")]
     // #[schema(example = "mistralai/mistral-small-latest")]
-    pub model: String,
+    pub model: Option<String>,
     #[serde(default)]
     pub stream: bool,
 }
@@ -78,7 +81,7 @@ pub struct ApiChatMessage {
 
 impl ApiChatMessage {
     /// Convert to llm::ChatMessage for use with the LLM client
-    pub fn to_chat_message(&self) -> ChatMessage {
+    pub fn to_chat_msg(&self) -> ChatMessage {
         match self.role.as_str() {
             "user" => ChatMessage::user().content(&self.content).build(),
             "assistant" => ChatMessage::assistant().content(&self.content).build(),
@@ -144,13 +147,12 @@ pub struct SearchWorkflow {
     pub llm_model: String,
     pub llm_url: Option<String>,
     pub msg_id: String,
-    pub created: u64,
 }
 
 impl SearchWorkflow {
     /// Initialize a new search workflow (query LLM with MCP tools)
-    pub async fn new(model: String, bind_address: String) -> AppResult<Self> {
-        let created = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    pub async fn new(model: Option<String>, bind_address: String) -> AppResult<Self> {
+        // let created = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let msg_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
         // Use bind_address for MCP connection
         let transport =
@@ -172,8 +174,10 @@ impl SearchWorkflow {
                 )));
             }
         };
+
         let (llm_backend, llm_api_key, llm_model, llm_url) =
-            get_llm_config(&model).map_err(AppError::Llm)?;
+            get_llm_config(&model.unwrap_or("einfracz/qwen3-coder".to_string()))
+                .map_err(AppError::Llm)?;
         Ok(Self {
             mcp_client: client,
             llm_backend,
@@ -181,18 +185,17 @@ impl SearchWorkflow {
             llm_model,
             llm_url,
             msg_id,
-            created,
         })
     }
 
     /// Step 1: Check if tool calls are needed and execute them
-    pub async fn execute_tool_calls(
+    pub async fn request_tool_calls(
         &self,
         messages: &[ApiChatMessage],
-    ) -> AppResult<(String, Option<Vec<llm::ToolCall>>, McpSearchResult)> {
+    ) -> AppResult<(String, Option<Vec<llm::ToolCall>>)> {
         // Convert messages to LLM ChatMessage format
         let chat_messages: Vec<ChatMessage> =
-            messages.iter().map(|msg| msg.to_chat_message()).collect();
+            messages.iter().map(|msg| msg.to_chat_msg()).collect();
 
         // Configure LLM client with dynamic tools from MCP
         let mut llm_builder = LLMBuilder::new()
@@ -232,11 +235,37 @@ impl SearchWorkflow {
                     (e.to_string(), None)
                 }
             };
+        Ok((response_text, tool_calls))
+    }
 
+    /// Execute a single tool call and return the results
+    pub async fn execute_tool_call(&self, call: &ToolCall) -> AppResult<CallToolResult> {
+        // tracing::debug!("Calling tool {}", call.function.name);
+        let arguments = match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
+            Ok(value) => value.as_object().cloned(),
+            Err(_) => None,
+        };
+        // Call MCP tools
+        let tool_results = self
+            .mcp_client
+            .call_tool(CallToolRequestParam {
+                name: call.function.name.clone().into(),
+                arguments,
+            })
+            .await?;
+        Ok(tool_results)
+    }
+
+    /// Step 2: Execute tool calls
+    pub async fn execute_tool_calls(
+        &self,
+        tool_calls: &Option<Vec<ToolCall>>,
+    ) -> AppResult<McpSearchResult> {
         let mut search_results = McpSearchResult {
             total_found: 0,
             hits: vec![],
         };
+        // Dict with tool_call_id as key, and results (search_results, or structured content JSON, or plain text), remove total_found
         // Execute each tool call if any
         if let Some(tc) = &tool_calls {
             for call in tc {
@@ -270,7 +299,7 @@ impl SearchWorkflow {
                         }
                     }
                 } else {
-                    // Fallback: plain content
+                    // TODO: fallback for plain text
                     tracing::warn!(
                         "Tool {} returned plain text content: {:?}",
                         call.function.name,
@@ -291,7 +320,7 @@ impl SearchWorkflow {
                 }
             }
         }
-        Ok((response_text, tool_calls, search_results))
+        Ok(search_results)
     }
 
     /// Step 2: Generate summary and scores using LLM with structured output, then create final response
@@ -334,7 +363,7 @@ impl SearchWorkflow {
 
         // Convert messages and add formatted context
         let mut chat_messages: Vec<ChatMessage> =
-            messages.iter().map(|msg| msg.to_chat_message()).collect();
+            messages.iter().map(|msg| msg.to_chat_msg()).collect();
         chat_messages.push(ChatMessage::user().content(&formatted_context).build());
 
         // Create LLM client with structured output schema
@@ -397,47 +426,6 @@ impl SearchWorkflow {
             hits: search_results.hits,
             summary: llm_response.summary,
         })
-    }
-
-    /// Create SSE event for streaming responses
-    pub fn create_sse_event(
-        &self,
-        event_type: &str,
-        data: impl Serialize,
-    ) -> AppResult<sse::Event> {
-        Ok(sse::Event::default()
-            .event(event_type)
-            .data(serde_json::to_string(&data)?))
-    }
-
-    /// Create streaming chunk for OpenAI compatibility
-    pub fn create_stream_chunk(
-        &self,
-        content: Option<String>,
-        finish_reason: Option<String>,
-    ) -> AppResult<sse::Event> {
-        let chunk = StreamChunk {
-            id: self.msg_id.clone(),
-            object: "chat.completion.chunk".to_string(),
-            created: self.created,
-            model: self.llm_model.clone(),
-            choices: vec![StreamChoice {
-                index: 0,
-                delta: StreamDelta {
-                    role: if content.is_some() {
-                        Some("assistant".to_string())
-                    } else {
-                        None
-                    },
-                    content,
-                    function_call: None,
-                },
-                finish_reason,
-            }],
-        };
-        Ok(sse::Event::default()
-            .event("message")
-            .data(serde_json::to_string(&chunk)?))
     }
 
     /// Log search operation response with execution time
@@ -565,6 +553,19 @@ fn send_error_event(error_message: &str) -> AppResult<sse::Event> {
         }))?))
 }
 
+// TODO: support AG-UI streaming format https://docs.ag-ui.com/concepts/messages#streaming-messages
+// Events types: https://github.com/ag-ui-protocol/ag-ui/blob/be23d7e6b86bdfc1252e2d2948ef5743ba2e613c/python-sdk/ag_ui/core/events.py#L20
+// data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}
+// data: {"type":"TEXT_MESSAGE_START","messageId":"m1","role":"assistant"}
+// data: {"type":"TOOL_CALL_START","toolCallId":"c1","toolCallName":"search_data","parentMessageId":"m1"}
+// data: {"type":"TOOL_CALL_ARGS","toolCallId":"c1","delta":"{\"question\": \"insulin\"}"}
+// data: {"type":"TOOL_CALL_END","toolCallId":"c1"}
+// data: {"type":"TOOL_CALL_RESULT","id":"toolmsg1","role":"tool","toolCallId":"c1","content":"{\"total_found\":5,…}"}
+// data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"m1","delta":"Here are the results I found:"}
+// data: {"type":"TEXT_MESSAGE_END","messageId":"m1"}
+// data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}
+// NOTE: using `sse_event` for an AG-UI compliant streaming format
+
 /// Create a streaming search response
 fn create_chat_stream(
     resp: ChatInput,
@@ -572,6 +573,13 @@ fn create_chat_stream(
 ) -> impl Stream<Item = AppResult<sse::Event>> {
     async_stream::stream! {
         let start_time = SystemTime::now();
+        // Start run and assistant message
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let thread_id = format!("t{run_id}");
+        let msg_id = format!("chatcmpl-{run_id}");
+        yield Ok(sse_event(json!({"type":"RUN_STARTED","threadId":thread_id,"runId":run_id}))?);
+        yield Ok(sse_event(json!({"type":"TEXT_MESSAGE_START","messageId":msg_id,"role":"assistant"}))?);
+
         // Initialize the workflow
         let workflow = match SearchWorkflow::new(resp.model.clone(), state.bind_address.clone()).await {
             Ok(workflow) => workflow,
@@ -581,8 +589,9 @@ fn create_chat_stream(
                 return;
             }
         };
-        // Step 1: Execute tool calls if needed
-        let (response_txt, tool_calls, search_results) = match workflow.execute_tool_calls(&resp.messages).await {
+
+        // Step 1: Check if tool calls are neededß
+        let (response_txt, tool_calls) = match workflow.request_tool_calls(&resp.messages).await {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Tool call execution failed: {:?}", e);
@@ -590,47 +599,107 @@ fn create_chat_stream(
                 return;
             }
         };
-        // Stream tool call requested event
-        yield Ok(workflow.create_sse_event("tool_call_requested", &tool_calls)?);
+
+        // Stream tool call request, and execute each tool call if any
+        let mut search_results = McpSearchResult {
+            total_found: 0,
+            hits: vec![],
+        };
+        if let Some(ref tc) = tool_calls {
+            for (i, call) in tc.iter().enumerate() {
+                let tc_id = format!("c{}", i + 1);
+                yield Ok(sse_event(json!({"type":"TOOL_CALL_START","toolCallId":tc_id,"toolCallName":call.function.name,"parentMessageId":msg_id}))?);
+                yield Ok(sse_event(json!({"type":"TOOL_CALL_ARGS","toolCallId":tc_id,"delta":call.function.arguments}))?);
+
+                // Step 2: Execute tool calls and get aggregate search results
+                let tool_results = workflow.execute_tool_call(call).await?;
+
+                // Determine tool results message content
+                let tool_msg_content = if let Some(structured) = &tool_results.structured_content {
+                    // Priority 1: Try to parse as `McpSearchResult` (structured search results)
+                    match serde_json::from_value::<McpSearchResult>(structured.clone()) {
+                        Ok(new_search_results) => {
+                            let serialized = serde_json::to_string(&new_search_results).unwrap_or_default();
+                            // Accumulate results from multiple tool calls
+                            search_results.hits.extend(new_search_results.hits);
+                            search_results.total_found += new_search_results.total_found;
+                            serialized
+                        }
+                        Err(_) => {
+                            // Priority 2: Fallback to any structured JSON content
+                            serde_json::to_string(structured).unwrap_or_default()
+                        }
+                    }
+                } else {
+                    // Priority 3: Fallback to plain text content
+                    tracing::debug!(
+                        "Tool {} returned plain text content: {:?}",
+                        call.function.name,
+                        tool_results.content
+                    );
+                    tool_results
+                        .content
+                        .iter()
+                        .filter_map(|annotated| match &annotated.raw {
+                            rmcp::model::RawContent::Text(text_content) => {
+                                Some(text_content.text.as_str())
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+                yield Ok(sse_event(json!({
+                    "type":"TOOL_CALL_RESULT",
+                    "messageId": msg_id,
+                    "role": "tool",
+                    "content": tool_msg_content,
+                    "toolCallId": tc_id.clone(),
+                }))?);
+                yield Ok(sse_event(json!({"type":"TOOL_CALL_END","toolCallId":tc_id}))?);
+            }
+        }
+        // LEGACY: Stream tool call requested event
+        // yield Ok(workflow.create_sse_event("tool_call_requested", &tool_calls)?);
+
+
         // If no tool calls were made, handle as direct response
         if tool_calls.is_none() || search_results.total_found == 0 {
             let execution_time = start_time.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
-            if tool_calls.is_none() {
+            let response = if tool_calls.is_none() {
                 // Direct response without tool calls
                 let response = ChatSearchResponse {
                     hits: vec![],
                     summary: response_txt,
                 };
-                yield Ok(workflow.create_stream_chunk(
-                    Some(response.summary.clone()),
-                    Some("stop".to_string())
-                )?);
-                workflow.log_response(
-                    resp.stream,
-                    resp.messages.clone(),
-                    response,
-                    execution_time,
-                );
+                yield Ok(sse_event(json!({"type":"TEXT_MESSAGE_CONTENT","messageId":msg_id,"delta":response.summary.clone()}))?);
+                response
             } else {
                 // No results found
+                let no_res_msg = "No datasets found for your query.";
                 let response = ChatSearchResponse {
                     hits: vec![],
-                    summary: "Nothing found for your query.".to_string(),
+                    summary: no_res_msg.to_string(),
                 };
-                workflow.log_response(
-                    resp.stream,
-                    resp.messages.clone(),
-                    response,
-                    execution_time,
-                );
-                yield Ok(send_error_event("Nothing found for your query.")?);
-            }
+                yield Ok(sse_event(json!({"type":"TEXT_MESSAGE_CONTENT","messageId":msg_id,"delta":no_res_msg}))?);
+                yield Ok(send_error_event(no_res_msg)?);
+                response
+            };
+            yield Ok(sse_event(json!({"type":"TEXT_MESSAGE_END","messageId":msg_id}))?);
+            yield Ok(sse_event(json!({"type":"RUN_FINISHED","threadId":thread_id,"runId":run_id}))?);
+            workflow.log_response(
+                resp.stream,
+                resp.messages.clone(),
+                response,
+                execution_time,
+            );
             return;
         }
-        // Stream the tool results (without scores or summary)
-        yield Ok(workflow.create_sse_event("tool_call_result", &search_results)?);
 
-        // Step 2: Generate and stream summary and scores using LLM
+        // LEGACY: Stream the tool results (without scores or summary)
+        // yield Ok(workflow.create_sse_event("tool_call_result", &search_results)?);
+
+        // Step 3: Generate and stream summary and scores using LLM
         let final_response = match workflow.generate_summary_and_scores(&resp.messages, search_results).await {
             Ok(response) => response,
             Err(e) => {
@@ -639,7 +708,29 @@ fn create_chat_stream(
                 return;
             }
         };
-        yield Ok(workflow.create_sse_event("search_response", &final_response)?);
+        // LEGACY: Stream final response
+        // yield Ok(workflow.create_sse_event("search_response", &final_response)?);
+
+        // Stream the final assistant message content with summary
+        // yield Ok(sse_event(json!({"type":"TEXT_MESSAGE_CONTENT","messageId":msg_id,"delta":final_response.summary.clone()}))?);
+        let final_tc_id = "summarize_results";
+        yield Ok(sse_event(json!({"type":"TOOL_CALL_START","toolCallId":final_tc_id,"toolCallName":"summarize_results","parentMessageId":msg_id}))?);
+        // yield Ok(sse_event(json!({"type":"TOOL_CALL_ARGS","toolCallId":final_tc_id,"delta":call.function.arguments}))?);
+        yield Ok(sse_event(json!({
+            "type":"TOOL_CALL_RESULT",
+            "messageId": msg_id,
+            "role": "tool",
+            "content": serde_json::to_string(&final_response).unwrap_or_default(),
+            "toolCallId": final_tc_id,
+        }))?);
+        yield Ok(sse_event(json!({"type":"TOOL_CALL_END","toolCallId":final_tc_id}))?);
+
+        yield Ok(sse_event(json!({"type":"TEXT_MESSAGE_END","messageId":msg_id}))?);
+        // Finish the run
+        yield Ok(sse_event(json!({"type":"RUN_FINISHED","threadId":thread_id,"runId":run_id}))?);
+
+        // LEGACY: stop streaming chunk
+        // yield Ok(workflow.create_stream_chunk(None, Some("stop".to_string()))?);
 
         // Calculate execution time and log the search resp
         let execution_time = start_time.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
@@ -649,7 +740,6 @@ fn create_chat_stream(
             final_response,
             execution_time,
         );
-        yield Ok(workflow.create_stream_chunk(None, Some("stop".to_string()))?);
     }
 }
 
@@ -683,17 +773,74 @@ async fn regular_chat_handler(
         }
     };
     // Step 1: Execute tool calls if needed
-    let (_response_txt, _tool_calls, search_results) =
-        match workflow.execute_tool_calls(&resp.messages).await {
-            Ok(result) => result,
-            Err(e) => {
-                tracing::error!("Tool call execution failed: {:?}", e);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": "Error searching for datasets"})),
+    let (_response_txt, tool_calls) = match workflow.request_tool_calls(&resp.messages).await {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("Tool call execution failed: {:?}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": &format!("Error searching for datasets: {e}")})),
+            );
+        }
+    };
+    let search_results = match workflow.execute_tool_calls(&tool_calls).await {
+        Ok(results) => results,
+        Err(e) => {
+            tracing::error!("Tool call execution failed: {:?}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": &format!("Error executing tool calls: {e}")})),
+            );
+        }
+    };
+    let mut search_results = McpSearchResult {
+        total_found: 0,
+        hits: vec![],
+    };
+    if let Some(ref tc) = tool_calls {
+        for (i, call) in tc.iter().enumerate() {
+            let tc_id = format!("c{}", i + 1);
+            // Step 2: Execute tool calls and get aggregate search results
+            let tool_results = workflow.execute_tool_call(call).await.unwrap();
+
+            // Determine tool results message content
+            let tool_msg_content = if let Some(structured) = &tool_results.structured_content {
+                // Priority 1: Try to parse as `McpSearchResult` (structured search results)
+                match serde_json::from_value::<McpSearchResult>(structured.clone()) {
+                    Ok(new_search_results) => {
+                        let serialized = serde_json::to_string(&new_search_results).unwrap_or_default();
+                        // Accumulate results from multiple tool calls
+                        search_results.hits.extend(new_search_results.hits);
+                        search_results.total_found += new_search_results.total_found;
+                        serialized
+                    }
+                    Err(_) => {
+                        // Priority 2: Fallback to any structured JSON content
+                        serde_json::to_string(structured).unwrap_or_default()
+                    }
+                }
+            } else {
+                // Priority 3: Fallback to plain text content
+                tracing::debug!(
+                    "Tool {} returned plain text content: {:?}",
+                    call.function.name,
+                    tool_results.content
                 );
-            }
-        };
+                tool_results
+                    .content
+                    .iter()
+                    .filter_map(|annotated| match &annotated.raw {
+                        rmcp::model::RawContent::Text(text_content) => {
+                            Some(text_content.text.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+        }
+    }
+
     // If no datasets were found, return early
     if search_results.total_found == 0 || search_results.hits.is_empty() {
         let execution_time = start_time
@@ -742,4 +889,9 @@ async fn regular_chat_handler(
         execution_time,
     );
     (StatusCode::OK, Json(serde_json::json!(final_response)))
+}
+
+/// Create SSE event for streaming responses
+pub fn sse_event(data: impl Serialize) -> AppResult<sse::Event> {
+    Ok(sse::Event::default().data(serde_json::to_string(&data)?))
 }
