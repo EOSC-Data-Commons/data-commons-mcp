@@ -11,7 +11,7 @@ keywords = ["search", "llm", "mcp", "open data", "EOSC"]
 categories = ["science", "data"]
 
 [dependencies]
-rmcp = { version = "0.6", features = [
+rmcp = { version = "0.8", features = [
     "server",
     "transport-streamable-http-server",
     "transport-sse-server",

@@ -37,8 +37,11 @@ async fn test_mcp_endpoint() {
         protocol_version: Default::default(),
         capabilities: ClientCapabilities::default(),
         client_info: Implementation {
-            name: "MCP streamable HTTP client".to_string(),
             version: "0.0.1".to_string(),
+            name: "MCP streamable HTTP client".to_string(),
+            title: Some("Data Commons MCP Client".to_string()),
+            website_url: Some("https://github.com/EOSC-Data-Commons/data-commons-mcp".to_string()),
+            icons: None,
         },
     };
     let mcp_client = client_info.serve(transport).await.unwrap();

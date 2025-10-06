@@ -44,6 +44,7 @@ pub struct ChatInput {
     pub messages: Vec<ApiChatMessage>,
     // #[schema(example = "groq/moonshotai/kimi-k2-instruct")]
     // #[schema(example = "openai/gpt-4.1-nano")]
+    // #[schema(example = "einfracz/gpt-oss-120b")]
     #[schema(example = "einfracz/qwen3-coder")]
     // #[schema(example = "mistralai/mistral-small-latest")]
     pub model: Option<String>,
@@ -161,8 +162,11 @@ impl SearchWorkflow {
             protocol_version: Default::default(),
             capabilities: ClientCapabilities::default(),
             client_info: Implementation {
-                name: "MCP streamable HTTP client".to_string(),
                 version: "0.0.1".to_string(),
+                name: "MCP streamable HTTP client".to_string(),
+                title: Some("Data Commons MCP Client".to_string()),
+                website_url: Some("https://github.com/EOSC-Data-Commons/data-commons-mcp".to_string()),
+                icons: None,
             },
         };
         let client = match client_info.serve(transport).await {
@@ -204,6 +208,7 @@ impl SearchWorkflow {
             .model(&self.llm_model)
             .max_tokens(1024)
             .temperature(0.1)
+            // .tool_choice(ToolChoice::Any)  // NOTE: required for gpt-oss-120b to properly trigger too calls
             .system(SYSTEM_PROMPT_TOOLS);
         if let Some(url) = &self.llm_url {
             llm_builder = llm_builder.base_url(url);
@@ -256,72 +261,72 @@ impl SearchWorkflow {
         Ok(tool_results)
     }
 
-    /// Step 2: Execute tool calls
-    pub async fn execute_tool_calls(
-        &self,
-        tool_calls: &Option<Vec<ToolCall>>,
-    ) -> AppResult<McpSearchResult> {
-        let mut search_results = McpSearchResult {
-            total_found: 0,
-            hits: vec![],
-        };
-        // Dict with tool_call_id as key, and results (search_results, or structured content JSON, or plain text), remove total_found
-        // Execute each tool call if any
-        if let Some(tc) = &tool_calls {
-            for call in tc {
-                tracing::debug!("Calling tool {}", call.function.name);
-                let arguments =
-                    match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
-                        Ok(value) => value.as_object().cloned(),
-                        Err(_) => None,
-                    };
+    // /// Step 2: Execute tool calls
+    // pub async fn execute_tool_calls(
+    //     &self,
+    //     tool_calls: &Option<Vec<ToolCall>>,
+    // ) -> AppResult<McpSearchResult> {
+    //     let mut search_results = McpSearchResult {
+    //         total_found: 0,
+    //         hits: vec![],
+    //     };
+    //     // Dict with tool_call_id as key, and results (search_results, or structured content JSON, or plain text), remove total_found
+    //     // Execute each tool call if any
+    //     if let Some(tc) = &tool_calls {
+    //         for call in tc {
+    //             tracing::debug!("Calling tool {}", call.function.name);
+    //             let arguments =
+    //                 match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
+    //                     Ok(value) => value.as_object().cloned(),
+    //                     Err(_) => None,
+    //                 };
 
-                // Call MCP tools
-                let tool_results = self
-                    .mcp_client
-                    .call_tool(CallToolRequestParam {
-                        name: call.function.name.clone().into(),
-                        arguments,
-                    })
-                    .await?;
+    //             // Call MCP tools
+    //             let tool_results = self
+    //                 .mcp_client
+    //                 .call_tool(CallToolRequestParam {
+    //                     name: call.function.name.clone().into(),
+    //                     arguments,
+    //                 })
+    //                 .await?;
 
-                // Handle structured content if present
-                if let Some(structured) = &tool_results.structured_content {
-                    // serde_json::from_value::<McpSearchResult>(structured.clone())?
-                    match serde_json::from_value::<McpSearchResult>(structured.clone()) {
-                        Ok(new_search_results) => {
-                            // Accumulate results from multiple tool calls
-                            search_results.hits.extend(new_search_results.hits);
-                            search_results.total_found += new_search_results.total_found;
-                        }
-                        Err(e) => {
-                            return Err(AppError::Serde(e));
-                        }
-                    }
-                } else {
-                    // TODO: fallback for plain text
-                    tracing::warn!(
-                        "Tool {} returned plain text content: {:?}",
-                        call.function.name,
-                        tool_results.content
-                    );
-                    // let plain_content = tool_results
-                    //     .content
-                    //     .iter()
-                    //     .flat_map(|annotated_vec| annotated_vec.iter())
-                    //     .filter_map(|annotated| match &annotated.raw {
-                    //         rmcp::model::RawContent::Text(text_content) => {
-                    //             Some(text_content.text.as_str())
-                    //         }
-                    //         _ => None,
-                    //     })
-                    //     .collect::<Vec<_>>()
-                    //     .join(" ");
-                }
-            }
-        }
-        Ok(search_results)
-    }
+    //             // Handle structured content if present
+    //             if let Some(structured) = &tool_results.structured_content {
+    //                 // serde_json::from_value::<McpSearchResult>(structured.clone())?
+    //                 match serde_json::from_value::<McpSearchResult>(structured.clone()) {
+    //                     Ok(new_search_results) => {
+    //                         // Accumulate results from multiple tool calls
+    //                         search_results.hits.extend(new_search_results.hits);
+    //                         search_results.total_found += new_search_results.total_found;
+    //                     }
+    //                     Err(e) => {
+    //                         return Err(AppError::Serde(e));
+    //                     }
+    //                 }
+    //             } else {
+    //                 // TODO: fallback for plain text
+    //                 tracing::warn!(
+    //                     "Tool {} returned plain text content: {:?}",
+    //                     call.function.name,
+    //                     tool_results.content
+    //                 );
+    //                 // let plain_content = tool_results
+    //                 //     .content
+    //                 //     .iter()
+    //                 //     .flat_map(|annotated_vec| annotated_vec.iter())
+    //                 //     .filter_map(|annotated| match &annotated.raw {
+    //                 //         rmcp::model::RawContent::Text(text_content) => {
+    //                 //             Some(text_content.text.as_str())
+    //                 //         }
+    //                 //         _ => None,
+    //                 //     })
+    //                 //     .collect::<Vec<_>>()
+    //                 //     .join(" ");
+    //             }
+    //         }
+    //     }
+    //     Ok(search_results)
+    // }
 
     /// Step 2: Generate summary and scores using LLM with structured output, then create final response
     pub async fn generate_summary_and_scores(
@@ -784,28 +789,27 @@ async fn regular_chat_handler(
             );
         }
     };
-    let search_results = match workflow.execute_tool_calls(&tool_calls).await {
-        Ok(results) => results,
-        Err(e) => {
-            tracing::error!("Tool call execution failed: {:?}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": &format!("Error executing tool calls: {e}")})),
-            );
-        }
-    };
+    // let search_results = match workflow.execute_tool_calls(&tool_calls).await {
+    //     Ok(results) => results,
+    //     Err(e) => {
+    //         tracing::error!("Tool call execution failed: {:?}", e);
+    //         return (
+    //             StatusCode::INTERNAL_SERVER_ERROR,
+    //             Json(serde_json::json!({"error": &format!("Error executing tool calls: {e}")})),
+    //         );
+    //     }
+    // };
     let mut search_results = McpSearchResult {
         total_found: 0,
         hits: vec![],
     };
     if let Some(ref tc) = tool_calls {
-        for (i, call) in tc.iter().enumerate() {
-            let tc_id = format!("c{}", i + 1);
+        for call in tc.iter() {
             // Step 2: Execute tool calls and get aggregate search results
             let tool_results = workflow.execute_tool_call(call).await.unwrap();
 
             // Determine tool results message content
-            let tool_msg_content = if let Some(structured) = &tool_results.structured_content {
+            if let Some(structured) = &tool_results.structured_content {
                 // Priority 1: Try to parse as `McpSearchResult` (structured search results)
                 match serde_json::from_value::<McpSearchResult>(structured.clone()) {
                     Ok(new_search_results) => {

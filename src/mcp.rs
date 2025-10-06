@@ -374,6 +374,7 @@ impl ServerHandler for DataCommonsTools {
                 Some("This is an example prompt that takes one required argument, search_query"),
                 Some(vec![PromptArgument {
                     name: "search_query".to_string(),
+                    title : Some("Search Query".to_string()),
                     description: Some("Search query to find data".to_string()),
                     required: Some(true),
                 }]),
