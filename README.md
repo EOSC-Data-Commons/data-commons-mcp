@@ -43,9 +43,9 @@ Create a `.cargo/config.toml` file with your [Mistral API key](https://admin.mis
 
 ```toml
 [env]
+EINFRACZ_API_KEY = "YOUR_API_KEY"
 MISTRAL_API_KEY = "YOUR_API_KEY"
 OPENAI_API_KEY = "YOUR_API_KEY"
-EINFRACZ_API_KEY = "YOUR_API_KEY"
 ```
 
 ### ⚡️ Start dev server

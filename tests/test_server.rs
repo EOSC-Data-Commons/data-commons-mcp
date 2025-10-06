@@ -1,5 +1,4 @@
 use data_commons_mcp::{Args, build_router};
-use reqwest::Client;
 use tokio::spawn;
 
 use rmcp::{
@@ -73,6 +72,7 @@ async fn test_mcp_endpoint() {
     );
 }
 
+// use reqwest::Client;
 // // Requires OpenSearch running locally
 // #[tokio::test]
 // async fn test_chat_endpoint() {

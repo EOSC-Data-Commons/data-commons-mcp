@@ -554,7 +554,8 @@ fn send_error_event(error_message: &str) -> AppResult<sse::Event> {
 }
 
 // TODO: support AG-UI streaming format https://docs.ag-ui.com/concepts/messages#streaming-messages
-// Events types: https://github.com/ag-ui-protocol/ag-ui/blob/be23d7e6b86bdfc1252e2d2948ef5743ba2e613c/python-sdk/ag_ui/core/events.py#L20
+// Streaming events docs: https://docs.ag-ui.com/concepts/events#toolcallresult
+// Events types code reference: https://github.com/ag-ui-protocol/ag-ui/blob/be23d7e6b86bdfc1252e2d2948ef5743ba2e613c/python-sdk/ag_ui/core/events.py#L20
 // data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}
 // data: {"type":"TEXT_MESSAGE_START","messageId":"m1","role":"assistant"}
 // data: {"type":"TOOL_CALL_START","toolCallId":"c1","toolCallName":"search_data","parentMessageId":"m1"}

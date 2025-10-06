@@ -25,7 +25,7 @@ sequenceDiagram
         activate LLM
         LLM-->>MCP: Return scored datasets and summary in natural language
         deactivate LLM
-        MCP->>Tool: Get relevant tools for ranked datasets 
+        MCP->>Tool: Get relevant tools for ranked datasets
         activate Tool
         Tool-->>MCP: Return relevant tools for ranked datasets
         deactivate Tool
@@ -35,3 +35,7 @@ sequenceDiagram
         deactivate UI
         deactivate User
 ```
+
+> [!TIP]
+>
+> You can use [mermaidchart.com](https://www.mermaidchart.com) to visualize the mermaid file as you edit it.
