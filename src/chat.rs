@@ -226,20 +226,22 @@ impl SearchWorkflow {
         let llm = llm_builder.build().expect("Failed to build LLM client");
 
         // Query the LLM to check if tool call necessary
-        let (response_text, tool_calls) =
+        let (response_text, tool_calls, usage) =
             match llm.chat_with_tools(&chat_messages, llm.tools()).await {
                 Ok(response) => {
                     // tracing::debug!("LLM tool call response: {response:#?}");
                     (
                         response.text().unwrap_or_default().to_string(),
                         response.tool_calls(),
+                        response.usage(),
                     )
                 }
                 Err(e) => {
                     // Stream error as message
-                    (e.to_string(), None)
+                    (e.to_string(), None, None)
                 }
             };
+        tracing::debug!("LLM tool call usage: {usage:#?}");
         Ok((response_text, tool_calls))
     }
 
@@ -389,7 +391,10 @@ impl SearchWorkflow {
 
         // Send chat request using additional infos retrieved by the tool call
         let response_text = match llm_resolution.chat(&chat_messages).await {
-            Ok(response) => response.text().unwrap_or_default().to_string(),
+            Ok(response) => {
+                tracing::debug!("LLM summarize call usage: {:#?}", response.usage());
+                response.text().unwrap_or_default().to_string()
+            },
             Err(e) => {
                 tracing::error!("Chat error!!!: {e}");
                 // return Err(AppError::Llm(e.to_string()));
