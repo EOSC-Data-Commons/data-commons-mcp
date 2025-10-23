@@ -1,6 +1,9 @@
 # 🔭 EOSC Data Commons MCP server
 
-[![Build](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/build.yml/badge.svg)](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/build.yml) [![Docker image](https://img.shields.io/badge/docker-ghcr.io-blue.svg?logo=docker)](https://github.com/EOSC-Data-Commons/data-commons-mcp/pkgs/container/data-commons-mcp)
+[![Build](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/build.yml/badge.svg)](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/build.yml) 
+[![Docker image](https://img.shields.io/badge/docker-ghcr.io-blue.svg?logo=docker)](https://github.com/EOSC-Data-Commons/data-commons-mcp/pkgs/container/data-commons-mcp)
+[![PyPI - Version](https://img.shields.io/pypi/v/data-commons-mcp.svg?logo=pypi&label=PyPI&logoColor=silver)](https://pypi.org/project/data-commons-mcp/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/data-commons-mcp.svg?logo=python&label=Python&logoColor=silver)](https://pypi.org/project/data-commons-mcp/)
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server exposing an HTTP POST endpoint to access data from various open-access data publishers, developed for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/).
 
@@ -11,15 +14,14 @@ It uses a search API, and a Large Language Model (LLM) to help users find the da
 The HTTP API comprises 2 main endpoints:
 
 - `/mcp`: **MCP server** that searches for relevant data to answer a user question using the EOSC Data Commons OpenSearch service
-  - Uses [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) with Streamable HTTP transport
+  - Uses Streamable HTTP transport
   - Available tools:
     - [x] Search datasets
     - [ ] Search tools
     - [ ] Search citations related to datasets or tools
 
 - `/chat`: **HTTP POST** endpoint (JSON) for chatting with the MCP server tools via an LLM provider (API key provided through env variable at deployment)
-  - Uses [`axum`](https://github.com/tokio-rs/axum), [`utoipa`](https://github.com/juhaku/utoipa) for OpenAPI spec generation, [`llm`](https://github.com/graniet/llm) to interact with LLM providers (e.g. [Mistral](https://admin.mistral.ai/organization/api-keys), OpenAI)
-  - Returns a streaming response: tool call requested, then tool call results, and final search results.
+  - Streams a Server-Sent Events (SSE) response complying with the [AG-UI protocol](https://ag-ui.com)
 
 ## 🛠️ Development
 
@@ -27,59 +29,53 @@ The HTTP API comprises 2 main endpoints:
 >
 > Requirements:
 >
-> - [Rust](https://www.rust-lang.org/tools/install)
-> - API key for a LLM provider: [Mistral.ai](https://console.mistral.ai/api-keys) or OpenAI, you can use the free tier, you just need to login
+> - [x] [`uv`](https://docs.astral.sh/uv/getting-started/installation/), to easily handle scripts and virtual environments
+> - [x] docker, to deploy the OpenSearch service (or just access to a running instance)
+> - [x] API key for a LLM provider: [e-infra CZ](https://chat.ai.e-infra.cz/), [Mistral.ai](https://console.mistral.ai/api-keys), or [OpenRouter](https://openrouter.ai/)
 >
-> Recommended VSCode extension: [`rust-analyzer`](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
 
 ### 📥 Install dev dependencies
 
 ```sh
-rustup update
-cargo install cargo-release cargo-deny cargo-watch git-cliff
+uv sync --extra agent
 ```
 
-Create a `.cargo/config.toml` file with your [Mistral API key](https://admin.mistral.ai/organization/api-keys) or OpenAI API key:
+Create a `keys.env` file with your LLM provider API key(s):
 
-```toml
-[env]
-EINFRACZ_API_KEY = "YOUR_API_KEY"
-MISTRAL_API_KEY = "YOUR_API_KEY"
-OPENAI_API_KEY = "YOUR_API_KEY"
+```sh
+EINFRACZ_API_KEY=YOUR_API_KEY
+MISTRAL_API_KEY=YOUR_API_KEY
+OPENROUTER_API_KEY=YOUR_API_KEY
 ```
 
 ### ⚡️ Start dev server
 
-Start the **MCP server** in dev at http://localhost:8000/mcp, with OpenAPI UI at http://localhost:8000/docs
+Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp
 
 ```sh
-cargo run
+uv run uvicorn src.data_commons_mcp.main:app
 ```
 
-Customize server configuration through CLI arguments:
+Customize server configuration through environment variables:
 
 ```sh
-cargo run --  --mcp-only -b 0.0.0.0:8004 --opensearch-url http://localhost:9200
+SERVER_PORT=8001 uv run uvicorn src.data_commons_mcp.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-Run and reload on change to the code:
-
-```sh
-cargo watch -x run
-```
-
-> [!NOTE]
+> [!TIP]
 >
 > Example `curl` request:
 >
 > ```sh
-> curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "data insulin"}], "model": "einfracz/qwen3-coder", "stream": true}'
+> curl -X POST http://localhost:8000/chat \
+> 	-H "Content-Type: application/json" -H "Authorization: SECRET_KEY" \
+> 	-d '{"messages": [{"role": "user", "content": "Educational datasets from Switzerland covering student assessments, language competencies, and learning outcomes, including experimental or longitudinal studies on pupils or students."}], "model": "einfracz/qwen3-coder"}'
 > ```
->
+> 
 > Recommended model per supported provider:
 >
 > - `einfracz/qwen3-coder`
-> - `mistralai/mistral-medium-latest` (large is older, and not as good with tool calls)
+>- `mistralai/mistral-medium-latest` (large is older, and not as good with tool calls)
 > - `groq/moonshotai/kimi-k2-instruct`
 > - `openai/gpt-4.1`
 
@@ -88,58 +84,26 @@ cargo watch -x run
 > To build and integrate the frontend web app to the server, from the [frontend folder](https://github.com/EOSC-Data-Commons/eoscdcpoc) run:
 >
 > ```sh
-> npm run build && rm -rf ../data-commons-mcp/src/webapp/ && cp -R dist/spa/ ../data-commons-mcp/src/webapp/
+> npm run build && rm -rf ../data-commons-mcp/src/data_commons_mcp/webapp/ && cp -R dist/spa/ ../data-commons-mcp/src/data_commons_mcp/webapp/
 > ```
 >
-
-### 🔌 Connect MCP client
-
-Follow the instructions of your client, and use the `/mcp` URL of your deployed server (e.g. http://localhost:8000/mcp)
-
-#### 🐙 VSCode GitHub Copilot
-
-Add a new MCP server through the VSCode UI:
-
-- Open the Command Palette (`ctrl+shift+p` or `cmd+shift+p`)
-- Search for `MCP: Add Server...`
-- Choose `HTTP`, and provide the MCP server URL http://localhost:8000/mcp
-
-Your VSCode `mcp.json` should look like:
-
-```json
-{
-    "servers": {
-        "data-commons-mcp-server": {
-            "url": "http://localhost:8000/mcp",
-            "type": "http"
-        }
-    },
-    "inputs": []
-}
-```
 
 ### 📦 Build for production
 
-Build binary in `target/release/`
+Build binary in `dist/`
 
 ```sh
-cargo build --release
+uv build
 ```
-
-> [!NOTE]
->
-> Start the server with:
->
-> ```sh
-> ./target/release/data-commons-mcp
-> ```
 
 ### 🐳 Deploy with Docker
 
 Create a `keys.env` file with the API keys:
 
 ```sh
+EINFRACZ_API_KEY=YOUR_API_KEY
 MISTRAL_API_KEY=YOUR_API_KEY
+OPENROUTER_API_KEY=YOUR_API_KEY
 SEARCH_API_KEY=SECRET_KEY_YOU_CAN_USE_IN_FRONTEND_TO_AVOID_SPAM
 ```
 
@@ -158,9 +122,8 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      RUST_LOG: info
       OPENSEARCH_URL: "http://opensearch:9200"
-      MISTRAL_API_KEY: "${MISTRAL_API_KEY}"
+      EINFRACZ_API_KEY: "${EINFRACZ_API_KEY}"
 ```
 
 Build and deploy the service:
@@ -169,53 +132,117 @@ Build and deploy the service:
 docker compose up
 ```
 
-### 🧼 Format & lint
+## 🔌 Connect MCP client
 
-Automatically format the codebase using `rustfmt`:
+Follow the instructions of your client, and use the `/mcp` URL of your deployed server (e.g. http://localhost:8000/mcp)
 
-```sh
-cargo fmt
+### 🐙 VSCode GitHub Copilot
+
+Add a new MCP server through the VSCode UI:
+
+- Open the Command Palette (`ctrl+shift+p` or `cmd+shift+p`)
+- Search for `MCP: Add Server...`
+- Choose `HTTP`, and provide the MCP server URL http://localhost:8000/mcp
+
+Your VSCode `mcp.json` should look like:
+
+```json
+{
+    "servers": {
+        "data-commons-mcp-http": {
+            "url": "http://localhost:8000/mcp",
+            "type": "http"
+        }
+    },
+    "inputs": []
+}
 ```
 
-Lint with `clippy`:
+Or with STDIO transport:
 
-```sh
-cargo clippy --all
+```json
+{
+   "servers": {
+      "data-commons-mcp": {
+         "type": "stdio",
+         "command": "uvx",
+         "args": ["data-commons-mcp"],
+         "env": {
+            "OPENSEARCH_URL": "OPENSEARCH_URL"
+         }
+      }
+   }
+}
 ```
 
-Automatically apply possible fixes:
+Or using local folder for development:
 
-```sh
-cargo clippy --fix
+```json
+{
+   "servers": {
+      "data-commons-mcp": {
+         "type": "stdio",
+         "cwd": "~/dev/data-commons-mcp",
+         "env": {
+            "OPENSEARCH_URL": "OPENSEARCH_URL"
+         },
+         "command": "uv",
+         "args": ["run", "data-commons-mcp"]
+      }
+   }
+}
 ```
 
-### ⛓️ Check supply chain
+## ✅ Run tests
 
-Check the dependency supply chain: licenses (only accept dependencies with OSI or FSF approved licenses), and vulnerabilities (CVE advisories).
-
-```sh
-cargo deny check
+```bash
+uv run pytest
 ```
 
-Update dependencies in `Cargo.lock`:
+To display all logs when debugging:
 
-```sh
-cargo update
+```bash
+uv run pytest -s
 ```
 
-### 🏷️ Release
+## 🧹 Format code and type check
 
-Dry run:
-
-```sh
-cargo release patch
+```bash
+uvx ruff format
+uvx ruff check --fix
+uv run mypy
 ```
 
-> Or `minor` / `major`
+## ♻️ Reset the environment
 
-Create release:
+Upgrade `uv`:
 
 ```sh
-cargo release patch --execute
+uv self update
 ```
 
+Clean `uv` cache:
+
+```sh
+uv cache clean
+```
+
+## 🏷️ Release process
+
+> [!IMPORTANT]
+>
+> Get a PyPI API token at [pypi.org/manage/account](https://pypi.org/manage/account).
+
+Run the release script providing the version bump: `fix`, `minor`, or `major`
+
+```sh
+.github/release.sh fix
+```
+
+> [!TIP]
+>
+> Add your PyPI token to your environment, e.g. in `~/.zshrc` or `~/.bashrc`:
+>
+> ```sh
+> export UV_PUBLISH_TOKEN=YOUR_TOKEN
+> ```

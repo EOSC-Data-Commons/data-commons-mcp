@@ -15,5 +15,3 @@ __pycache__/
 *.egg-info/
 .*_cache
 .coverage
-.files
-# uv.lock

@@ -1,23 +1,13 @@
-FROM rust:trixie AS build
-
-RUN apt-get update && apt-get -y install libssl-dev curl build-essential
-
-COPY . /app
+FROM ghcr.io/astral-sh/uv:python3.13-trixie-slim
+# https://docs.astral.sh/uv/guides/integration/docker
 
 WORKDIR /app
+COPY . /app/
 
+RUN uv sync --frozen --extra agent
 
-# Might need some flags, see https://crates.io/crates/ort
-# ENV RUSTFLAGS="-Clink-args=-Wl,-rpath,\$ORIGIN"
-
-RUN --mount=type=cache,target=/root/.cargo cargo build --release
-
-
-FROM debian:trixie AS runtime
-
-# Install libssl3 for libssl.so.3 runtime dependency and CA certificates to ddl ONNX model files
-RUN apt-get update && apt-get -y install libssl3 ca-certificates
-
-COPY --from=build /app/target/release/data-commons-mcp /
+ENV SERVER_PORT=8000
+ENV SERVER_HOST='0.0.0.0'
+ENV PYTHONUNBUFFERED='1'
 EXPOSE 8000
-CMD ["./data-commons-mcp"]
+ENTRYPOINT ["uv", "run", "uvicorn", "src.data_commons_mcp.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "6", "--log-config", "logging.yml"]

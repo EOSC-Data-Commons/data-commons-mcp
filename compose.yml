@@ -1,9 +1,11 @@
 services:
-  mcp:
+  data-commons-mcp:
     build: .
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      - RUST_LOG=info
+      - OPENSEARCH_URL=http://opensearch:9200
     env_file:
       - keys.env
+    volumes:
+      - ./data:/data # For logs

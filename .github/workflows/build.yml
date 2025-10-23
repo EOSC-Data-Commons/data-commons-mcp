@@ -8,20 +8,35 @@ on:
   # pull_request:
 
 jobs:
-  test:
-    name: ✅ Test
-    runs-on: ubuntu-latest
+  tests:
+    name: ✅ Run tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # os: ["ubuntu-latest", "windows-latest", "macos-latest"]
+        os: ["ubuntu-latest"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
     steps:
-      - uses: actions/checkout@v5
-      - run: rustup update
-      - run: cargo install cargo-deny
-      - run: cargo fmt -- --check
-      - run: cargo clippy --all --all-targets --all-features
-      - run: cargo deny check
-      - run: cargo build --release
-      - run: cargo test
-      #   env:
-      #     MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+    - uses: actions/checkout@v5
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: astral-sh/setup-uv@v7
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Lint
+      run: uvx ruff check
+
+    - name: Format
+      run: uvx ruff format --check
+
+    - name: Type check
+      run: uv run mypy
+
+    - name: Run tests
+      run: uv run pytest
 
   docker:
     name: 🐳 Build Docker image
@@ -70,74 +85,6 @@ jobs:
           cache-to: type=gha,mode=max
           # outputs: type=image,name=ghcr.io/eosc-data-commons/data-commons-mcp,push-by-digest=true,name-canonical=true,push=true
 
-
-  build-binaries:
-    name: 📦️ Build binaries for ${{ matrix.os }} (${{ matrix.target }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: linux
-            target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
-          - os: linux
-            target: aarch64-unknown-linux-gnu
-            runner: ubuntu-latest
-            # runner: ubuntu-24.04-arm64
-          - os: macos
-            target: x86_64-apple-darwin
-            runner: macos-latest
-          - os: macos
-            target: aarch64-apple-darwin
-            runner: macos-latest
-          - os: windows
-            target: x86_64-pc-windows-msvc
-            runner: windows-latest
-          - os: windows
-            target: aarch64-pc-windows-msvc
-            runner: windows-latest
-
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Add cross-compilation target
-        run: rustup update && rustup target add ${{ matrix.target }}
-
-      - name: Install dependencies
-        if: matrix.os == 'linux'
-        run: sudo apt update && sudo apt install -y pkg-config libssl-dev
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build binary
-        if: matrix.target != 'aarch64-unknown-linux-gnu'
-        run: cargo build --release --target ${{ matrix.target }}
-        # env:
-        #   CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-
-      - name: Build binary aarch64
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: data-commons-mcp_${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/data-commons-mcp${{ matrix.os == 'windows' && '.exe' || '' }}
-
-      - if: startsWith(github.ref, 'refs/tags/')
-        name: Prepare for release
-        run: |
-          mv target/${{ matrix.target }}/release/data-commons-mcp${{ matrix.os == 'windows' && '.exe' || '' }} data-commons-mcp_${{ matrix.target }}${{ matrix.os == 'windows' && '.exe' || '' }}
-
-      - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: |
-            data-commons-mcp_${{ matrix.target }}${{ matrix.os == 'windows' && '.exe' || '' }}
 
   generate-changelog:
     name: 🏔️ Generate changelog for the GitHub release
