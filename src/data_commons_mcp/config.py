@@ -24,9 +24,9 @@ class Settings(BaseSettings):
 
     # Embedding models: https://qdrant.github.io/fastembed/examples/Supported_Models/#supported-text-embedding-models
     embedding_model: str = "BAAI/bge-small-en-v1.5"
-    embedding_dimensions: int = 384
-    # embedding_model: str = "BAAI/bge-base-en-v1.5"
-    # embedding_dimensions: int = 768
+    embedding_dimensions: int = 384  # 60MB
+    # embedding_model: str = "intfloat/multilingual-e5-large"
+    # embedding_dimensions: int = 1024  # 2.2GB
 
     # LLM providers API keys
     default_llm_model: str = "einfracz/qwen3-coder"

@@ -19,9 +19,79 @@ The HTTP API comprises 2 main endpoints:
     - [x] Search datasets
     - [ ] Search tools
     - [ ] Search citations related to datasets or tools
-
+    - [ ] Search more details about a dataset content (files metadata)
+  
 - `/chat`: **HTTP POST** endpoint (JSON) for chatting with the MCP server tools via an LLM provider (API key provided through env variable at deployment)
-  - Streams a Server-Sent Events (SSE) response complying with the [AG-UI protocol](https://ag-ui.com)
+  - Streams Server-Sent Events (SSE) response complying with the [AG-UI protocol](https://ag-ui.com).
+
+> [!TIP]
+>
+> It can also be used just as a MCP server through the pip package.
+
+## 🔌 Connect client to MCP server
+
+The system can be used directly as a MCP server using either STDIO, or Streamable HTTP transport.
+
+> [!WARNING]
+>
+> You will need access to a pre-indexed OpenSearch instance for the MCP server to work.
+
+Follow the instructions of your client, and use the `/mcp` URL of your deployed server (e.g. http://localhost:8000/mcp)
+
+To add a new MCP server to **VSCode GitHub Copilot**:
+
+- Open the Command Palette (`ctrl+shift+p` or `cmd+shift+p`)
+- Search for `MCP: Add Server...`
+- Choose `HTTP`, and provide the MCP server URL http://localhost:8000/mcp
+
+Your VSCode `mcp.json` should look like:
+
+```json
+{
+    "servers": {
+        "data-commons-mcp-http": {
+            "url": "http://localhost:8000/mcp",
+            "type": "http"
+        }
+    },
+    "inputs": []
+}
+```
+
+Or with STDIO transport:
+
+```json
+{
+   "servers": {
+      "data-commons-mcp": {
+         "type": "stdio",
+         "command": "uvx",
+         "args": ["data-commons-mcp"],
+         "env": {
+            "OPENSEARCH_URL": "OPENSEARCH_URL"
+         }
+      }
+   }
+}
+```
+
+Or using local folder for development:
+
+```json
+{
+   "servers": {
+      "data-commons-mcp": {
+         "type": "stdio",
+         "cwd": "~/dev/data-commons-mcp",
+         "env": {
+            "OPENSEARCH_URL": "OPENSEARCH_URL"
+         },
+         "command": "uv",
+         "args": ["run", "data-commons-mcp"]
+      }
+   }
+}
+```
 
 ## 🛠️ Development
 
@@ -40,6 +110,12 @@ The HTTP API comprises 2 main endpoints:
 uv sync --extra agent
 ```
 
+Install pre-commit hooks:
+
+```sh
+uv run pre-commit install
+```
+
 Create a `keys.env` file with your LLM provider API key(s):
 
 ```sh
@@ -56,10 +132,12 @@ Start the server in dev at http://localhost:8000, with MCP endpoint at http://lo
 uv run uvicorn src.data_commons_mcp.main:app
 ```
 
+> Default `OPENSEARCH_URL=http://localhost:9200`
+
 Customize server configuration through environment variables:
 
 ```sh
-SERVER_PORT=8001 uv run uvicorn src.data_commons_mcp.main:app --host 0.0.0.0 --port 8001 --reload
+SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_commons_mcp.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 > [!TIP]
@@ -74,7 +152,7 @@ SERVER_PORT=8001 uv run uvicorn src.data_commons_mcp.main:app --host 0.0.0.0 --p
 > 
 > Recommended model per supported provider:
 >
-> - `einfracz/qwen3-coder`
+> - `einfracz/qwen3-coder` or `einfracz/gpt-oss-120b` (smaller, faster)
 >- `mistralai/mistral-medium-latest` (large is older, and not as good with tool calls)
 > - `groq/moonshotai/kimi-k2-instruct`
 > - `openai/gpt-4.1`
@@ -132,68 +210,7 @@ Build and deploy the service:
 docker compose up
 ```
 
-## 🔌 Connect MCP client
-
-Follow the instructions of your client, and use the `/mcp` URL of your deployed server (e.g. http://localhost:8000/mcp)
-
-### 🐙 VSCode GitHub Copilot
-
-Add a new MCP server through the VSCode UI:
-
-- Open the Command Palette (`ctrl+shift+p` or `cmd+shift+p`)
-- Search for `MCP: Add Server...`
-- Choose `HTTP`, and provide the MCP server URL http://localhost:8000/mcp
-
-Your VSCode `mcp.json` should look like:
-
-```json
-{
-    "servers": {
-        "data-commons-mcp-http": {
-            "url": "http://localhost:8000/mcp",
-            "type": "http"
-        }
-    },
-    "inputs": []
-}
-```
-
-Or with STDIO transport:
-
-```json
-{
-   "servers": {
-      "data-commons-mcp": {
-         "type": "stdio",
-         "command": "uvx",
-         "args": ["data-commons-mcp"],
-         "env": {
-            "OPENSEARCH_URL": "OPENSEARCH_URL"
-         }
-      }
-   }
-}
-```
-
-Or using local folder for development:
-
-```json
-{
-   "servers": {
-      "data-commons-mcp": {
-         "type": "stdio",
-         "cwd": "~/dev/data-commons-mcp",
-         "env": {
-            "OPENSEARCH_URL": "OPENSEARCH_URL"
-         },
-         "command": "uv",
-         "args": ["run", "data-commons-mcp"]
-      }
-   }
-}
-```
-
-## ✅ Run tests
+### ✅ Run tests
 
 ```bash
 uv run pytest
@@ -205,7 +222,7 @@ To display all logs when debugging:
 uv run pytest -s
 ```
 
-## 🧹 Format code and type check
+### 🧹 Format code and type check
 
 ```bash
 uvx ruff format
@@ -213,7 +230,7 @@ uvx ruff check --fix
 uv run mypy
 ```
 
-## ♻️ Reset the environment
+### ♻️ Reset the environment
 
 Upgrade `uv`:
 
@@ -227,7 +244,7 @@ Clean `uv` cache:
 uv cache clean
 ```
 
-## 🏷️ Release process
+### 🏷️ Release process
 
 > [!IMPORTANT]
 >
