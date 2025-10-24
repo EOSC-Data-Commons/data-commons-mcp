@@ -9,5 +9,6 @@ RUN uv sync --frozen --extra agent
 ENV SERVER_PORT=8000
 ENV SERVER_HOST='0.0.0.0'
 ENV PYTHONUNBUFFERED='1'
+ENV WORKERS=6
 EXPOSE 8000
-ENTRYPOINT ["uv", "run", "uvicorn", "src.data_commons_mcp.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "6", "--log-config", "logging.yml"]
+ENTRYPOINT ["uv", "run", "uvicorn", "src.data_commons_mcp.main:app", "--host", "$SERVER_HOST", "--port", "$SERVER_PORT", "--workers", "$WORKERS", "--log-config", "logging.yml"]

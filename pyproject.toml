@@ -1,7 +1,7 @@
 [project]
 requires-python = ">=3.10"
 name = "data-commons-mcp"
-description = "A Model Context Protocol (MCP) server exposing an HTTP POST endpoint to access data from various open-access data publishers, developed for the EOSC Data Commons project."
+description = "A Model Context Protocol (MCP) server to access data from various open-access data publishers, developed for the EOSC Data Commons project."
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
@@ -30,7 +30,7 @@ classifiers = [
 dynamic = ["version"]
 
 dependencies = [
-    "mcp >=1.18.0",
+    "mcp >=1.19.0",
     "pydantic >=2.12.0",
     "pydantic-settings >=2.11.0",
     "httpx >=0.28.1",
@@ -40,16 +40,14 @@ dependencies = [
 
 [project.optional-dependencies]
 agent = [
+    "starlette >=0.48.0",
+    "uvicorn[standard] >=0.38.0",
+    "ag-ui-protocol >=0.1.9",
     "langchain >=1.0.2",
-    "langchain-core >=1.0.0",
     "langchain-mcp-adapters >=0.1.10",
     "langchain-openai >=1.0.1",
     "langchain-groq >=1.0.0",
     # "langchain-huggingface", # This will install torch and many heavy nvidia dependencies
-    # Dependencies to deploy the API
-    "starlette >=0.48.0",
-    "uvicorn[standard] >=0.38.0",
-    "ag-ui-protocol >=0.1.9",
 ]
 gpu = [
     "fastembed-gpu >=0.5.1",

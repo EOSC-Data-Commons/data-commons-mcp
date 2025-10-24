@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     server_port: int = 8000
     server_host: str = "0.0.0.0"  # noqa: S104
     cors_enabled: bool = True
+    debug_enabled: bool = False
 
     # OpenSearch settings
     opensearch_url: str = "http://localhost:9200"
@@ -32,7 +33,8 @@ class Settings(BaseSettings):
     default_llm_model: str = "einfracz/qwen3-coder"
     einfracz_api_key: str = ""
     openrouter_api_key: str = ""
-    # default_max_tokens: int = 16384
+    llm_max_tokens: int = 8192  # or 4096
+    llm_seed: int = 42
 
     # The name of the application used for display
     app_name: str = "EOSC Data Commons MCP"

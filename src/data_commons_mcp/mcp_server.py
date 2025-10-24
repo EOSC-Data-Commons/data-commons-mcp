@@ -11,7 +11,7 @@ from data_commons_mcp.models import OpenSearchResults, SearchHit
 # Create MCP server https://github.com/modelcontextprotocol/python-sdk
 mcp = FastMCP(
     name="EOSC Data Commons MCP",
-    debug=True,
+    debug=settings.debug_enabled,
     dependencies=["mcp", "httpx", "opensearch-py", "fastembed", "pydantic"],
     instructions="Provide tools that helps users access data from various open-access data publishers, developed for the EOSC Data Commons project.",
     json_response=True,

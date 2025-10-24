@@ -1,6 +1,6 @@
 # 🔭 EOSC Data Commons MCP server
 
-[![Build](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/build.yml/badge.svg)](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/build.yml) 
+[![Build](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/build.yml/badge.svg)](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/build.yml)
 [![Docker image](https://img.shields.io/badge/docker-ghcr.io-blue.svg?logo=docker)](https://github.com/EOSC-Data-Commons/data-commons-mcp/pkgs/container/data-commons-mcp)
 [![PyPI - Version](https://img.shields.io/pypi/v/data-commons-mcp.svg?logo=pypi&label=PyPI&logoColor=silver)](https://pypi.org/project/data-commons-mcp/)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/data-commons-mcp.svg?logo=python&label=Python&logoColor=silver)](https://pypi.org/project/data-commons-mcp/)
@@ -20,7 +20,7 @@ The HTTP API comprises 2 main endpoints:
     - [ ] Search tools
     - [ ] Search citations related to datasets or tools
     - [ ] Search more details about a dataset content (files metadata)
-  
+
 - `/chat`: **HTTP POST** endpoint (JSON) for chatting with the MCP server tools via an LLM provider (API key provided through env variable at deployment)
   - Streams Server-Sent Events (SSE) response complying with the [AG-UI protocol](https://ag-ui.com).
 
@@ -129,7 +129,7 @@ OPENROUTER_API_KEY=YOUR_API_KEY
 Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp
 
 ```sh
-uv run uvicorn src.data_commons_mcp.main:app
+uv run uvicorn src.data_commons_mcp.main:app --log-config logging.yml --reload
 ```
 
 > Default `OPENSEARCH_URL=http://localhost:9200`
@@ -137,7 +137,7 @@ uv run uvicorn src.data_commons_mcp.main:app
 Customize server configuration through environment variables:
 
 ```sh
-SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_commons_mcp.main:app --host 0.0.0.0 --port 8001 --reload
+SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_commons_mcp.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload
 ```
 
 > [!TIP]
@@ -149,7 +149,7 @@ SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_co
 > 	-H "Content-Type: application/json" -H "Authorization: SECRET_KEY" \
 > 	-d '{"messages": [{"role": "user", "content": "Educational datasets from Switzerland covering student assessments, language competencies, and learning outcomes, including experimental or longitudinal studies on pupils or students."}], "model": "einfracz/qwen3-coder"}'
 > ```
-> 
+>
 > Recommended model per supported provider:
 >
 > - `einfracz/qwen3-coder` or `einfracz/gpt-oss-120b` (smaller, faster)
@@ -263,3 +263,9 @@ Run the release script providing the version bump: `fix`, `minor`, or `major`
 > ```sh
 > export UV_PUBLISH_TOKEN=YOUR_TOKEN
 > ```
+
+## 🤝 Acknowledments
+
+The LLM provider `einfracz` is a service provided by e-INFRA CZ and operated by CERIT-SC Masaryk University
+
+Computational resources were provided by the e-INFRA CZ project (ID:90254), supported by the Ministry of Education, Youth and Sports of the Czech Republic.

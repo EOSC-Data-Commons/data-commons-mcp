@@ -20,7 +20,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from langchain.chat_models import BaseChatModel
-from langchain.messages import AnyMessage, HumanMessage, SystemMessage
+from langchain.messages import AnyMessage, HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from mcp.types import TextContent
 from starlette.middleware.cors import CORSMiddleware
@@ -33,13 +33,23 @@ from data_commons_mcp.mcp_server import mcp
 from data_commons_mcp.models import (
     AgentInput,
     FileMetrixResponse,
+    LangChainRerankingOutputMsg,
+    LangChainResponseMetadata,
     OpenSearchResults,
     RankedSearchResponse,
     RerankingOutput,
     SearchHit,
+    TokenUsageMetadata,
 )
 from data_commons_mcp.prompts import RERANK_PROMPT, SUMMARIZE_PROMPT, TOOL_CALL_PROMPT
-from data_commons_mcp.utils import file_logger, get_langchain_msgs, load_chat_model, logger, sse_event
+from data_commons_mcp.utils import (
+    file_logger,
+    get_langchain_msgs,
+    get_system_prompt,
+    load_chat_model,
+    logger,
+    sse_event,
+)
 
 # Get the MCP server Starlette app, and mount our routes to it
 app = mcp.streamable_http_app()
@@ -84,6 +94,7 @@ async def chat_handler(request: Request) -> StreamingResponse:
 async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]:
     """Stream the chat response with tool calls, reranking, and results."""
     msg_id = str(uuid.uuid4())
+    token_usage = TokenUsageMetadata()
     yield sse_event(RunStartedEvent(thread_id=request.thread_id, run_id=request.run_id))
     yield sse_event(TextMessageStartEvent(message_id=msg_id, role="assistant"))
 
@@ -96,7 +107,9 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
 
     # Step 1: Call LLM to get tool calls
     msgs = get_langchain_msgs(request.messages)
-    tc_llm_resp = llm_with_tools.invoke([SystemMessage(TOOL_CALL_PROMPT), *msgs])
+    tc_llm_resp = llm_with_tools.invoke([get_system_prompt(TOOL_CALL_PROMPT), *msgs])
+    token_usage += LangChainResponseMetadata.model_validate(tc_llm_resp.response_metadata).token_usage
+
     if tc_llm_resp.content and isinstance(tc_llm_resp.content, str):
         # If tc_llm_resp has text send it as a TextMessage content alongside tool calls
         yield sse_event(
@@ -154,7 +167,7 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
     # Handle if there were tool calls output, but no search results: ask the LLM to summarize tools outputs
     if tc_llm_resp.tool_calls and search_results.total_found == 0 and tool_text_outputs:
         summary_msgs: list[AnyMessage] = [
-            SystemMessage(SUMMARIZE_PROMPT),
+            get_system_prompt(SUMMARIZE_PROMPT),
             *msgs,
             HumanMessage(
                 content=(
@@ -172,6 +185,7 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
                 )
             )
             summary_resp = llm.invoke(summary_msgs)
+            token_usage += LangChainResponseMetadata.model_validate(summary_resp.response_metadata).token_usage
             # Send the summary back as a ToolCallResult-like event so the UI can display it
             # NOTE: use TextMessageChunkEvent?
             yield sse_event(
@@ -205,6 +219,7 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
         llm,
         msgs,
         search_results,
+        token_usage,
     )
     await get_relevant_tools(final_response)
     yield sse_event(
@@ -222,6 +237,7 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
         json.dumps(
             {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "token_usage": token_usage.model_dump(),
                 "input": request.model_dump(),
                 "response": final_response.model_dump(),
             }
@@ -236,6 +252,7 @@ async def rerank_search_results(
     llm: BaseChatModel,
     chat_messages: list[AnyMessage],
     search_results: OpenSearchResults,
+    token_usage: TokenUsageMetadata,
 ) -> RankedSearchResponse:
     """Rerank search results using LLM with structured output.
 
@@ -265,25 +282,25 @@ async def rerank_search_results(
         formatted_context += f"   Description: {hit.description}\n\n"
 
     rerank_msgs: list[AnyMessage] = [
-        SystemMessage(RERANK_PROMPT),
+        get_system_prompt(RERANK_PROMPT),
         *chat_messages,
         HumanMessage(content=formatted_context),
     ]
     try:
         # Call LLM with structured output for reranking
-        llm_structured_rerank = llm.with_structured_output(RerankingOutput, method="function_calling")
-        raw = llm_structured_rerank.invoke(rerank_msgs)
-        rerank_response = raw if isinstance(raw, RerankingOutput) else RerankingOutput.model_validate(raw)
+        llm_structured_rerank = llm.with_structured_output(RerankingOutput, method="function_calling", include_raw=True)
+        rerank_resp = LangChainRerankingOutputMsg.model_validate(llm_structured_rerank.invoke(rerank_msgs))
+        token_usage += LangChainResponseMetadata.model_validate(rerank_resp.raw.response_metadata).token_usage
 
         # Add scores to all datasets from search results
-        score_lookup = {hit.url: hit.score for hit in rerank_response.hits}
+        score_lookup = {hit.url: hit.score for hit in rerank_resp.parsed.hits}
         # print(f"Rerank response: {score_lookup}")
         for hit in search_results.hits:
             hit.score = score_lookup.get(hit.id, 0.0)
 
         # Sort hits by score in descending order
         search_results.hits.sort(key=lambda h: h.score or 0.0, reverse=True)
-        return RankedSearchResponse(summary=rerank_response.summary, hits=search_results.hits)
+        return RankedSearchResponse(summary=rerank_resp.parsed.summary, hits=search_results.hits)
     except Exception as e:
         logger.error(f"Reranking failed: {e}")
         # Fallback: return results as-is without reranking

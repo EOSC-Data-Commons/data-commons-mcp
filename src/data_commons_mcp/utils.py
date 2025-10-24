@@ -3,6 +3,7 @@
 import logging
 import os
 import pathlib
+from datetime import datetime
 
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
@@ -16,10 +17,11 @@ from data_commons_mcp.models import AgentMsg
 logger = logging.getLogger("data_commons_mcp")
 logger.setLevel(logging.INFO)
 # handler = logging.StreamHandler()
-# formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+# formatter = logging.Formatter("\x1b[90m%(asctime)s\x1b[0m [%(levelname)s] %(message)s")
 # handler.setFormatter(formatter)
 # logger.addHandler(handler)
 # logger.propagate = False
+# GREY = "\x1b[90m" RESET = "\x1b[0m"
 
 # Log conversations to a file
 file_logger = logging.getLogger("conversation_logger")
@@ -35,14 +37,32 @@ try:
 except Exception:
     logger.warning(f"⚠️ Logs filepath {settings.logs_filepath} not writable.")
 
-
-logging.getLogger("uvicorn").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+if settings.debug_enabled:
+    logging.getLogger("uvicorn").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+    logging.getLogger("opensearch").setLevel(logging.INFO)
+    logging.getLogger("mcp").setLevel(logging.INFO)
+
+# if not settings.debug_enabled:
+#     logging.getLogger("uvicorn").setLevel(logging.WARNING)
+#     logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+#     # logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+#     logging.getLogger("httpx").setLevel(logging.WARNING)
+#     logging.getLogger("opensearch").setLevel(logging.WARNING)
+#     logging.getLogger("mcp").setLevel(logging.WARNING)
 
 
 def sse_event(data: BaseModel) -> str:
     """Format data as a Server-Sent Events (SSE) event string."""
     return f"data: {data.model_dump_json()}\n\n"
+
+
+def get_system_prompt(prompt: str) -> SystemMessage:
+    """Get the system prompt with current date."""
+    return SystemMessage(prompt.format(current_date=datetime.now().strftime("%Y-%m-%d")))
 
 
 def get_langchain_msgs(msgs: list[AgentMsg]) -> list[AnyMessage]:
@@ -76,6 +96,8 @@ def load_chat_model(model: str) -> BaseChatModel:
             base_url="https://chat.ai.e-infra.cz/api/v1",
             model=model_name,
             api_key=SecretStr(settings.einfracz_api_key),
+            max_completion_tokens=settings.llm_max_tokens,
+            seed=settings.llm_seed,
         )
 
     if provider == "openrouter":
@@ -84,8 +106,8 @@ def load_chat_model(model: str) -> BaseChatModel:
             base_url="https://openrouter.ai/api/v1",
             model=model_name,
             api_key=SecretStr(settings.openrouter_api_key),
-            # temperature=configuration.temperature,
-            # seed=settings.seed,
+            max_completion_tokens=settings.llm_max_tokens,
+            seed=settings.llm_seed,
             # default_headers={
             #     "HTTP-Referer": getenv("YOUR_SITE_URL"),
             #     "X-Title": getenv("YOUR_SITE_NAME"),

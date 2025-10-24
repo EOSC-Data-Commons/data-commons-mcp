@@ -2,6 +2,7 @@
 
 import uuid
 
+from langchain.messages import AIMessage
 from pydantic import BaseModel, Field, computed_field
 
 from data_commons_mcp.config import settings
@@ -166,3 +167,36 @@ class AgentInput(BaseModel):
     # state: Any = None
     # forwarded_props: Any = None
     # messages: List[Message]
+
+
+# # Response metadata from LangChain LLM calls
+
+
+class TokenUsageMetadata(BaseModel):
+    """Metadata about LLM usage, e.g., token counts."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    reasoning_tokens: int = 0
+
+    def __iadd__(self, other: "TokenUsageMetadata") -> "TokenUsageMetadata":
+        """In-place add other usage counts into this instance and return self."""
+        self.prompt_tokens += other.prompt_tokens
+        self.completion_tokens += other.completion_tokens
+        self.total_tokens += other.total_tokens
+        self.reasoning_tokens += other.reasoning_tokens
+        return self
+
+
+class LangChainResponseMetadata(BaseModel):
+    """Metadata about a LangChain response, e.g. LLM usage."""
+
+    token_usage: TokenUsageMetadata
+
+
+class LangChainRerankingOutputMsg(BaseModel):
+    """Structured output response for reranking from LangChain."""
+
+    raw: AIMessage
+    parsed: RerankingOutput
