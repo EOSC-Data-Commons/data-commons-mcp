@@ -1,12 +1,14 @@
 import argparse
 from typing import Any
+from urllib.parse import quote
 
+import httpx
 from fastembed import TextEmbedding
 from mcp.server.fastmcp import FastMCP
 from opensearchpy import OpenSearch
 
 from data_commons_mcp.config import settings
-from data_commons_mcp.models import OpenSearchResults, SearchHit
+from data_commons_mcp.models import FileMetrixFilesResponse, OpenSearchResults, SearchHit
 
 # Create MCP server https://github.com/modelcontextprotocol/python-sdk
 mcp = FastMCP(
@@ -100,6 +102,27 @@ async def search_data(question: str, start_date: str | None = None, end_date: st
     )
     # print(f"Processed OpenSearch results: {res}")
     return res
+
+
+@mcp.tool()
+async def get_dataset_files(dataset_doi: str) -> FileMetrixFilesResponse:
+    """Get metadata for the files in a dataset (name, description, type, dates).
+
+    Args:
+        dataset_doi: DOI of the dataset
+
+    Returns:
+        Search results with a single dataset matching the DOI
+    """
+    # https://filemetrix.labs.dansdemo.nl/10.17026%2FSS%2FR5XWCC
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"https://filemetrix.labs.dansdemo.nl/{quote(dataset_doi, safe='')}",
+            headers={"accept": "application/json"},
+        )
+        if resp.status_code == 200:
+            return FileMetrixFilesResponse.model_validate(resp.json())
+    return FileMetrixFilesResponse(files=[])
 
 
 @mcp.tool()

@@ -32,7 +32,7 @@ from data_commons_mcp.config import settings
 from data_commons_mcp.mcp_server import mcp
 from data_commons_mcp.models import (
     AgentInput,
-    FileMetrixResponse,
+    FileMetrixExtensionsResponse,
     LangChainRerankingOutputMsg,
     LangChainResponseMetadata,
     OpenSearchResults,
@@ -327,7 +327,7 @@ async def get_relevant_tools(search_response: RankedSearchResponse) -> None:
         search_response: The search results to enhance with file extensions.
     """
 
-    async def fetch_extensions(client: httpx.AsyncClient, doi: str) -> FileMetrixResponse | None:
+    async def fetch_extensions(client: httpx.AsyncClient, doi: str) -> FileMetrixExtensionsResponse | None:
         """Fetch extensions for a single DOI."""
         try:
             encoded = quote(doi, safe="")
@@ -336,7 +336,7 @@ async def get_relevant_tools(search_response: RankedSearchResponse) -> None:
                 headers={"accept": "application/json"},
             )
             if resp.status_code == 200:
-                return FileMetrixResponse.model_validate(resp.json())
+                return FileMetrixExtensionsResponse.model_validate(resp.json())
             logger.warning("FileMetrix returned %d for DOI %s", resp.status_code, doi)
         except Exception as e:
             logger.warning("FileMetrix fetch error for %s: %s", doi, e)

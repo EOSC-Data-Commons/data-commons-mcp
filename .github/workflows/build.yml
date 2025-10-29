@@ -5,6 +5,9 @@ on:
   push:
     branches: [ main ]
     tags: [ "v*.*.*" ]
+  # # Allow other repositories to trigger this workflow via repository_dispatch
+  # repository_dispatch:
+  #   types: [main-push]
   # pull_request:
 
 jobs:
@@ -53,6 +56,27 @@ jobs:
       image-metadata: ${{ steps.meta.outputs.json }}
     steps:
       - uses: actions/checkout@v5
+
+      - name: Checkout frontend repo
+        uses: actions/checkout@v5
+        with:
+          repository: EOSC-Data-Commons/eoscdcpoc
+          path: eoscdcpoc
+          # If this workflow was triggered by a tag, use that tag to check out the frontend repo
+          ref: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'main' }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Build frontend
+        run: |
+          cd eoscdcpoc
+          npm ci
+          npm run build
+          rm -rf ../src/data_commons_mcp/webapp/
+          cp -R dist/spa/ ../src/data_commons_mcp/webapp/
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3

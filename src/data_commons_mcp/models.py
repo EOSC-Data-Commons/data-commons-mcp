@@ -141,10 +141,72 @@ class RerankingOutput(BaseModel):
     hits: list[RankedHit]
 
 
-class FileMetrixResponse(BaseModel):
+# FileMetrix API response models
+
+
+class FileMetrixExtensionsResponse(BaseModel):
     """Response model for the FileMetrix extensions endpoint."""
 
     extensions: list[str] = []
+
+
+class FileMetrixChecksum(BaseModel):
+    """Checksum object nested in raw_metadata.checksum."""
+
+    type: str
+    value: str
+
+
+class FileMetrixRawFileMetadata(BaseModel):
+    """Raw metadata returned by the storage system for a file."""
+
+    id: int
+    persistent_id: str | None = Field(None, alias="persistentId")
+    filename: str | None = None
+    content_type: str | None = Field(None, alias="contentType")
+    friendly_type: str | None = Field(None, alias="friendlyType")
+    filesize: int | None = Field(None, alias="filesize")
+    description: str | None = None
+    storage_identifier: str | None = Field(None, alias="storageIdentifier")
+    original_file_format: str | None = Field(None, alias="originalFileFormat")
+    original_format_label: str | None = Field(None, alias="originalFormatLabel")
+    original_file_size: int | None = Field(None, alias="originalFileSize")
+    original_file_name: str | None = Field(None, alias="originalFileName")
+    UNF: str | None = None
+    root_data_file_id: int | None = Field(None, alias="rootDataFileId")
+    checksum: FileMetrixChecksum | None = None
+    tabular_data: bool | None = Field(None, alias="tabularData")
+    creation_date: str | None = Field(None, alias="creationDate")
+    publication_date: str | None = Field(None, alias="publicationDate")
+    file_access_request: bool | None = Field(None, alias="fileAccessRequest")
+
+
+class FileMetrixFileEntry(BaseModel):
+    """A single file entry from the FileMetrix/files endpoint."""
+
+    link: str
+    name: str
+    size: int | None = None
+    hash: str | None = None
+    hash_type: str | None = Field(None, alias="hash_type")
+    raw_metadata: FileMetrixRawFileMetadata | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+# # https://filemetrix.labs.dansdemo.nl/10.17026%2FSS%2FR5XWCC
+class FileMetrixFilesResponse(BaseModel):
+    """Response model for the FileMetrix files endpoint.
+
+    Expected input shape (example):
+    {
+      "files": [ { ... }, ... ]
+    }
+    """
+
+    files: list[FileMetrixFileEntry] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
 
 
 # Chat agent input models
