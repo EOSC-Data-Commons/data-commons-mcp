@@ -41,6 +41,11 @@ jobs:
     - name: Type check
       run: uv run mypy
 
+    - name: Start server
+      run: |
+        SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_commons_mcp.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload &
+        sleep 10
+
     - name: Run tests
       run: uv run pytest
 

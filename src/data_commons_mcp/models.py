@@ -56,6 +56,16 @@ class SearchHitSrc(BaseModel):
 
 
 # https://github.com/EOSC-Data-Commons/metadata-warehouse/blob/main/src/config/opensearch_mapping.json
+class ToolRegistryTool(BaseModel):
+    """A tool from the tool registry."""
+
+    tool_uri: str = Field(..., alias="toolURI")
+    tool_label: str = Field(..., alias="toolLabel")
+    tool_description: str = Field(..., alias="toolDescription")
+
+    model_config = {"populate_by_name": True}
+
+
 class SearchHit(BaseModel):
     """A single search result hit from OpenSearch, enriched with optional additional metadata."""
 
@@ -65,6 +75,7 @@ class SearchHit(BaseModel):
     # Reranking score and file extensions
     score: float | None = None
     file_extensions: list[str] = Field(default_factory=list, alias="fileExtensions")
+    relevant_tools: list[ToolRegistryTool] = Field(default_factory=list, alias="relevantTools")
 
     # Allow population by field name (useful when constructing instances programmatically)
     # and keep default alias handling so input with `_id`, `_source`, `_score` will map correctly
@@ -147,7 +158,7 @@ class RerankingOutput(BaseModel):
 class FileMetrixExtensionsResponse(BaseModel):
     """Response model for the FileMetrix extensions endpoint."""
 
-    extensions: list[str] = []
+    extensions: list[str] = Field(default_factory=list)
 
 
 class FileMetrixChecksum(BaseModel):
@@ -194,7 +205,7 @@ class FileMetrixFileEntry(BaseModel):
     model_config = {"populate_by_name": True}
 
 
-# # https://filemetrix.labs.dansdemo.nl/10.17026%2FSS%2FR5XWCC
+# # https://filemetrix.labs.dansdemo.nl/api/v1/10.17026%2FSS%2FR5XWCC
 class FileMetrixFilesResponse(BaseModel):
     """Response model for the FileMetrix files endpoint.
 

@@ -211,6 +211,10 @@ docker compose up
 
 ### ✅ Run tests
 
+> [!CAUTION]
+>
+> You need to first start the server on port 8001 (see start dev server section)
+
 ```bash
 uv run pytest
 ```

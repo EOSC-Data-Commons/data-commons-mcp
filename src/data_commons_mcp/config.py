@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     """Define the service settings for the server that can be set using environment variables."""
 
     # Seach results settings
-    opensearch_results_count: int = 5
+    opensearch_results_count: int = 10
     reranking_results_count: int = 5
 
     # Server settings
@@ -19,9 +19,9 @@ class Settings(BaseSettings):
     debug_enabled: bool = False
 
     # OpenSearch settings
+    opensearch_index: str = "test_datacite"
     opensearch_url: str = "http://localhost:9200"
     # opensearch_url: str = "http://opensearch:9200"
-    opensearch_index: str = "test_datacite"
 
     # Embedding models: https://qdrant.github.io/fastembed/examples/Supported_Models/#supported-text-embedding-models
     embedding_model: str = "BAAI/bge-small-en-v1.5"

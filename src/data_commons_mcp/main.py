@@ -1,13 +1,10 @@
 """HTTP API to deploy the EOSC Data Commons search agent."""
 
-import asyncio
 import json
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
-from urllib.parse import quote, unquote, urlparse
 
-import httpx
 from ag_ui.core import (
     RunFinishedEvent,
     RunStartedEvent,
@@ -29,16 +26,15 @@ from starlette.responses import FileResponse, StreamingResponse
 from starlette.staticfiles import StaticFiles
 
 from data_commons_mcp.config import settings
+from data_commons_mcp.logging import BLUE, BOLD, RESET, YELLOW
 from data_commons_mcp.mcp_server import mcp
 from data_commons_mcp.models import (
     AgentInput,
-    FileMetrixExtensionsResponse,
     LangChainRerankingOutputMsg,
     LangChainResponseMetadata,
     OpenSearchResults,
     RankedSearchResponse,
     RerankingOutput,
-    SearchHit,
     TokenUsageMetadata,
 )
 from data_commons_mcp.prompts import RERANK_PROMPT, SUMMARIZE_PROMPT, TOOL_CALL_PROMPT
@@ -72,9 +68,9 @@ mcp_client = MultiServerMCPClient(
     }
 )
 
-logger.info(f"""💬 Search UI at {settings.server_url}
-⚡️ Streamable HTTP MCP server started on {settings.server_url}/mcp
-🔎 Using OpenSearch service on {settings.opensearch_url}""")
+logger.info(f"""💬 {BOLD}{BLUE}Search UI{RESET} started on {BOLD}{YELLOW}{settings.server_url}{RESET}
+⚡️ Streamable HTTP MCP server started on {BOLD}{settings.server_url}/mcp{RESET}
+🔎 Using OpenSearch service on {BOLD}{settings.opensearch_url}{RESET}""")
 
 
 async def chat_handler(request: Request) -> StreamingResponse:
@@ -132,8 +128,8 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
             yield sse_event(ToolCallArgsEvent(tool_call_id=tool_call_id, delta=json.dumps(tool_call["args"])))
             tc_exec_res = await session.call_tool(tool_call["name"], tool_call["args"])
 
-            # Handle structured content, try to parse as OpenSearchResults
             if tc_exec_res.structuredContent:
+                # Handle structured content, try to parse as `OpenSearchResults`
                 try:
                     tool_results = OpenSearchResults(**tc_exec_res.structuredContent)
                     search_results.hits.extend(tool_results.hits)
@@ -145,9 +141,8 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
                         message_id=msg_id, tool_call_id=tool_call_id, content=tool_results_str, role="tool"
                     )
                 )
-
-            # Handle if text content is sent back
-            if tc_exec_res.content:
+            elif tc_exec_res.content:
+                # Handle if text content is sent back
                 for resp_content in tc_exec_res.content:
                     if isinstance(resp_content, TextContent):
                         # Stream the raw tool text back to the UI, and record it for fallback summarization
@@ -221,7 +216,6 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
         search_results,
         token_usage,
     )
-    await get_relevant_tools(final_response)
     yield sse_event(
         ToolCallResultEvent(
             message_id=msg_id,
@@ -243,6 +237,7 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
             }
         )
     )
+    logger.info(f'/chat "{request.messages[-1].content}" | {token_usage.model_dump()}')
 
 
 app.router.add_route("/chat", chat_handler, methods=["POST"])
@@ -308,62 +303,6 @@ async def rerank_search_results(
             summary=f"Found {search_results.total_found} relevant datasets.",
             hits=search_results.hits,
         )
-
-
-# In OpenSearch and Filemetrix: https://doi.org/10.17026/DANS-2B8-ZGY2
-# Data to Monitor Soil Aggregate Breakdown
-# Data on fair evaluation
-
-
-# https://confluence.egi.eu/display/EOSCDATACOMMONS/API+Definitions+and+Implementation+Guidelines
-# https://dev.matchmaker.eosc-data-commons.eu/search?q=search for data about Cognitive load in cyclists while navigating in traffic&model=einfracz%2Fqwen3-coder
-# curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "Datasets about representation of dogs in medieval time"}], "model": "einfracz/qwen3-coder", "stream": true}'
-# curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Harelbeke Evolis"}], "model": "einfracz/qwen3-coder", "stream": true}'
-# curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Cognitive load in cyclists while navigating in traffic"}], "model": "einfracz/qwen3-coder", "stream": true}'
-async def get_relevant_tools(search_response: RankedSearchResponse) -> None:
-    """Fetch file extensions from FileMetrix API for each hit's DOI and update hits in-place.
-
-    Args:
-        search_response: The search results to enhance with file extensions.
-    """
-
-    async def fetch_extensions(client: httpx.AsyncClient, doi: str) -> FileMetrixExtensionsResponse | None:
-        """Fetch extensions for a single DOI."""
-        try:
-            encoded = quote(doi, safe="")
-            resp = await client.get(
-                f"https://filemetrix.labs.dansdemo.nl/extensions/{encoded}",
-                headers={"accept": "application/json"},
-            )
-            if resp.status_code == 200:
-                return FileMetrixExtensionsResponse.model_validate(resp.json())
-            logger.warning("FileMetrix returned %d for DOI %s", resp.status_code, doi)
-        except Exception as e:
-            logger.warning("FileMetrix fetch error for %s: %s", doi, e)
-        return None
-
-    # Extract DOI from hit and create fetch task
-    async def process_hit(client: httpx.AsyncClient, hit: SearchHit) -> None:
-        """Extract DOI from hit and fetch/apply extensions."""
-        doi = None
-        try:
-            if hit.id.startswith("http"):
-                parsed = urlparse(hit.id)
-                if "doi.org" in parsed.netloc:
-                    doi = unquote(parsed.path.lstrip("/"))
-            else:
-                doi = hit.id
-        except Exception:
-            return
-        if not doi:
-            return
-        fm = await fetch_extensions(client, doi)
-        if fm:
-            hit.file_extensions = fm.extensions or []
-            logger.info(f"DOI {doi} -> extensions: {fm.extensions}")
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        await asyncio.gather(*(process_hit(client, hit) for hit in search_response.hits))
 
 
 # Serve website built using vite

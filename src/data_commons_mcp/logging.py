@@ -21,6 +21,9 @@ COLOR_MAP: Mapping[int, str] = {
 }
 GREY = "\x1b[90m"
 RESET = "\x1b[0m"
+BOLD = "\x1b[1m"
+BLUE = "\x1b[34m"
+YELLOW = "\x1b[33m"
 
 
 class ColoredFormatter(logging.Formatter):
