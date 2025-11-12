@@ -25,7 +25,7 @@ mcp = FastMCP(
     dependencies=["mcp", "httpx", "opensearch-py", "fastembed", "pydantic"],
     instructions="Provide tools that helps users access data from various open-access data publishers, developed for the EOSC Data Commons project.",
     json_response=True,
-    # stateless_http=True,
+    stateless_http=True,
 )
 
 FILEMETRIX_API = "https://filemetrix.labs.dansdemo.nl/api/v1"
