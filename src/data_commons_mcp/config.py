@@ -54,9 +54,11 @@ class Settings(BaseSettings):
         """Computed server URL using the host and port, for accessing locally for /mcp calls.
 
         Returns:
-            A string like 'http://0.0.0.0:8888'.
+            A string like 'http://127.0.0.1:8888'.
         """
-        return f"http://{self.server_host}:{self.server_port}"
+        # Use 127.0.0.1 for connecting to the service (0.0.0.0 is only for binding)
+        host = "127.0.0.1" if self.server_host == "0.0.0.0" else self.server_host  # noqa: S104
+        return f"http://{host}:{self.server_port}"
 
 
 settings = Settings()
