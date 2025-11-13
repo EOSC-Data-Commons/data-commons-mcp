@@ -209,6 +209,18 @@ Build and deploy the service:
 docker compose up
 ```
 
+> [!IMPORTANT]
+>
+> Current deployment to staging server is done automatically through GitHub Actions at each push to the `main` branch.
+>
+> When a push is made the workflow will:
+>
+> - Pull the `main` branch from the frontend repository
+> - Build the frontend, and add it to `src/data_commons_mcp/webapp`
+> - Build the docker image for the server
+> - Publish the docker image as `main`/`latest`
+> - The staging infrastructure then automatically pull the `latest` version of the image and deploys it.
+
 ### ✅ Run tests
 
 > [!CAUTION]

@@ -35,9 +35,15 @@ embedding_model = TextEmbedding(settings.embedding_model)
 opensearch_client = OpenSearch(hosts=[settings.opensearch_url])
 
 
+# https://github.com/EOSC-Data-Commons/metadata-warehouse/blob/main/src/config/opensearch_mapping.json
+
+
 @mcp.tool()
 async def search_data(
-    search_input: str, start_date: str | None = None, end_date: str | None = None
+    search_input: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    # creator_name: str | None = None
 ) -> OpenSearchResults:
     """Search for data relevant to the user question.
 
@@ -45,13 +51,14 @@ async def search_data(
         question: Natural language question
         start_date: Optional start date in yyyy-MM-dd
         end_date: Optional end date in yyyy-MM-dd
+        creator_name: Optional creator name to filter by
 
     Returns:
         Results from OpenSearch (total_found, hits[])
     """
     # Generate embedding for the query
-    # embedding = next(iter(embedding_model.embed([f"passage: {question}"])))
     embedding = next(iter(embedding_model.embed([search_input])))
+    # embedding = next(iter(embedding_model.embed([f"passage: {question}"])))
 
     # Define filters
     filters = [
@@ -78,6 +85,23 @@ async def search_data(
                 }
             }
         )
+
+    # if creator_name:
+    #     filters.append(
+    #         {
+    #             "nested": {
+    #                 "path": "creators",
+    #                 "query": {
+    #                     "wildcard": {
+    #                         "creators.creatorName": {
+    #                             "value": f"*{creator_name}*",
+    #                             "case_insensitive": True,
+    #                         }
+    #                     }
+    #                 },
+    #             }
+    #         }
+    #     )
 
     emb: dict[str, Any] = {
         "vector": embedding,
