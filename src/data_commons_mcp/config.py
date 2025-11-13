@@ -9,8 +9,11 @@ class Settings(BaseSettings):
     """Define the service settings for the server that can be set using environment variables."""
 
     # Seach results settings
-    opensearch_results_count: int = 10
-    reranking_results_count: int = 5
+    opensearch_results_count: int = 100
+    reranking_results_count: int = 20
+
+    filemetrix_api: str = "https://filemetrix.labs.dansdemo.nl/api/v1"
+    tool_registry_api: str = "https://tool-registry.labs.dansdemo.nl/tools"
 
     # Server settings
     server_port: int = 8000

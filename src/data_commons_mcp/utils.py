@@ -97,7 +97,6 @@ def load_chat_model(model: str) -> BaseChatModel:
             model=model_name,
             api_key=SecretStr(settings.einfracz_api_key),
             max_completion_tokens=settings.llm_max_tokens,
-            seed=settings.llm_seed,
         )
 
     if provider == "openrouter":
@@ -107,7 +106,6 @@ def load_chat_model(model: str) -> BaseChatModel:
             model=model_name,
             api_key=SecretStr(settings.openrouter_api_key),
             max_completion_tokens=settings.llm_max_tokens,
-            seed=settings.llm_seed,
             # default_headers={
             #     "HTTP-Referer": getenv("YOUR_SITE_URL"),
             #     "X-Title": getenv("YOUR_SITE_NAME"),

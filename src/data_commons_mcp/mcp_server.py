@@ -1,7 +1,6 @@
 import argparse
-import asyncio
 from typing import Any
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote
 
 import httpx
 from fastembed import TextEmbedding
@@ -10,13 +9,10 @@ from opensearchpy import OpenSearch
 
 from data_commons_mcp.config import settings
 from data_commons_mcp.models import (
-    FileMetrixExtensionsResponse,
     FileMetrixFilesResponse,
     OpenSearchResults,
     SearchHit,
-    ToolRegistryTool,
 )
-from data_commons_mcp.utils import logger
 
 # Create MCP server https://github.com/modelcontextprotocol/python-sdk
 mcp = FastMCP(
@@ -27,9 +23,6 @@ mcp = FastMCP(
     json_response=True,
     stateless_http=True,
 )
-
-FILEMETRIX_API = "https://filemetrix.labs.dansdemo.nl/api/v1"
-TOOL_REGISTRY_API = "https://tool-registry.labs.dansdemo.nl/tools"
 
 embedding_model = TextEmbedding(settings.embedding_model)
 opensearch_client = OpenSearch(hosts=[settings.opensearch_url])
@@ -86,6 +79,7 @@ async def search_data(
             }
         )
 
+    # Glucose level changes in the liver of individuals with type 1 diabetes from 1980 to 2020 by Westerink
     # if creator_name:
     #     filters.append(
     #         {
@@ -110,6 +104,7 @@ async def search_data(
     if filters:
         emb["filter"] = {"bool": {"must": filters}}
     body = {
+        "size": settings.opensearch_results_count,
         "_source": [
             "titles",
             "subjects",
@@ -136,7 +131,7 @@ async def search_data(
         total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
         hits=[SearchHit(**hit) for hit in resp.get("hits", {}).get("hits", [])],
     )
-    await get_relevant_tools(res)
+    # await get_relevant_tools(res)
     # print(f"Processed OpenSearch results: {res}")
     return res
 
@@ -154,7 +149,7 @@ async def get_dataset_files(dataset_doi: str) -> FileMetrixFilesResponse:
     # https://filemetrix.labs.dansdemo.nl/api/v1/10.17026%2FSS%2FR5XWCC
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(
-            f"{FILEMETRIX_API}/{quote(dataset_doi, safe='')}",
+            f"{settings.filemetrix_api}/{quote(dataset_doi, safe='')}",
             headers={"accept": "application/json"},
         )
         if resp.status_code == 200:
@@ -232,102 +227,6 @@ async def search_citations(items_id: list[str]) -> OpenSearchResults:
         ],
     }
     return OpenSearchResults.model_validate(search_results)
-
-
-# In OpenSearch and Filemetrix: https://doi.org/10.17026/DANS-2B8-ZGY2
-# Data to Monitor Soil Aggregate Breakdown
-# Data on fair evaluation
-
-
-# https://confluence.egi.eu/display/EOSCDATACOMMONS/API+Definitions+and+Implementation+Guidelines
-# https://dev.matchmaker.eosc-data-commons.eu/search?q=search for data about Cognitive load in cyclists while navigating in traffic&model=einfracz%2Fqwen3-coder
-# curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "Datasets about representation of dogs in medieval time"}], "model": "einfracz/qwen3-coder", "stream": true}'
-# curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Harelbeke Evolis"}], "model": "einfracz/qwen3-coder", "stream": true}'
-# curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Cognitive load in cyclists while navigating in traffic"}], "model": "einfracz/qwen3-coder", "stream": true}'
-async def get_relevant_tools(search_results: OpenSearchResults) -> None:
-    """Fetch file extensions and relevant tools from the FileMetrix API in parallel for each hit's DOI,
-    and update hits in-place.
-
-    Args:
-        search_results: The OpenSearch results to enhance with file extensions and relevant tools.
-    """
-
-    async def fetch_extensions(client: httpx.AsyncClient, doi: str) -> FileMetrixExtensionsResponse | None:
-        """Fetch extensions for a single DOI."""
-        try:
-            encoded = quote(doi, safe="")
-            resp = await client.get(
-                f"{FILEMETRIX_API}/extensions/{encoded}",
-                headers={"accept": "application/json"},
-            )
-            if resp.status_code == 200:
-                return FileMetrixExtensionsResponse.model_validate(resp.json())
-            logger.warning(f"FileMetrix returned {resp.status_code} for DOI {doi}")
-        except Exception as e:
-            logger.warning(f"FileMetrix fetch error for {doi}: {e}")
-        return None
-
-    async def fetch_tools_for_extension(client: httpx.AsyncClient, extension: str) -> list[dict[str, str]] | None:
-        """Fetch relevant tools for a file extension from the tool registry."""
-        try:
-            resp = await client.get(
-                f"{TOOL_REGISTRY_API}/input/{extension}",
-                headers={"accept": "application/json"},
-            )
-            if resp.status_code == 200:
-                return resp.json()
-            logger.warning(f"Tool registry returned {resp.status_code} for extension {extension}")
-        except Exception as e:
-            logger.warning(f"Tool registry fetch error for {extension}: {e}")
-        return None
-
-    # Extract DOI from hit and create fetch task
-    async def process_hit(client: httpx.AsyncClient, hit: SearchHit) -> None:
-        """Extract DOI from hit and fetch/apply extensions and relevant tools."""
-        doi = None
-        try:
-            if hit.id.startswith("http"):
-                parsed = urlparse(hit.id)
-                if "doi.org" in parsed.netloc:
-                    doi = unquote(parsed.path.lstrip("/"))
-            else:
-                doi = hit.id
-        except Exception:
-            return
-        if not doi:
-            return
-
-        # Fetch file extensions
-        fm = await fetch_extensions(client, doi)
-        if fm:
-            hit.file_extensions = fm.extensions
-            logger.info(f"📁 https://doi.org/{doi} -> extensions: {fm.extensions}")
-
-            # Fetch relevant tools for each extension
-            all_tools = []
-            for ext in fm.extensions:
-                tools_data = await fetch_tools_for_extension(client, ext)
-                if tools_data:
-                    try:
-                        for tool_dict in tools_data:
-                            tool = ToolRegistryTool.model_validate(tool_dict)
-                            all_tools.append(tool)
-                            logger.info(f"🔧 {ext} -> tool: {tool.tool_label}")
-                    except Exception as e:
-                        logger.warning(f"Error parsing tool data for {ext}: {e}")
-
-            # Remove duplicates by tool_uri while preserving order
-            seen = set()
-            unique_tools = []
-            for tool in all_tools:
-                if tool.tool_uri not in seen:
-                    seen.add(tool.tool_uri)
-                    unique_tools.append(tool)
-
-            hit.relevant_tools = unique_tools
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        await asyncio.gather(*(process_hit(client, hit) for hit in search_results.hits))
 
 
 def cli() -> None:
