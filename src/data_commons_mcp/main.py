@@ -90,6 +90,10 @@ async def chat_handler(request: Request) -> StreamingResponse:
     return StreamingResponse(
         stream_chat_response(AgentInput.model_validate(await request.json())),
         media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
