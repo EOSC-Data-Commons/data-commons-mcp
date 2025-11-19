@@ -93,12 +93,18 @@ async def chat_handler(request: Request) -> StreamingResponse:
     )
 
 
+def get_timestamp() -> int:
+    """Get the current UTC timestamp in seconds."""
+    return int(datetime.now(timezone.utc).timestamp())
+
+
 async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]:
     """Stream the chat response with tool calls, reranking, and results."""
     msg_id = str(uuid.uuid4())
     token_usage = TokenUsageMetadata()
-    yield sse_event(RunStartedEvent(thread_id=request.thread_id, run_id=request.run_id))
-    yield sse_event(TextMessageStartEvent(message_id=msg_id, role="assistant"))
+    yield sse_event(RunStartedEvent(thread_id=request.thread_id, run_id=request.run_id, timestamp=get_timestamp()))
+    yield sse_event(TextMessageStartEvent(message_id=msg_id, role="assistant", timestamp=get_timestamp()))
+    await asyncio.sleep(0)  # Ensure events are flushed to client
 
     # Get tools from the MCP client
     tools = await mcp_client.get_tools()
@@ -117,6 +123,7 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
         yield sse_event(
             TextMessageChunkEvent(
                 delta=tc_llm_resp.content,
+                timestamp=get_timestamp(),
             )
         )
 
@@ -128,10 +135,18 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
             tool_call_id = tool_call["name"]
             yield sse_event(
                 ToolCallStartEvent(
-                    tool_call_id=tool_call_id, tool_call_name=tool_call["name"], parent_message_id=msg_id
+                    tool_call_id=tool_call_id,
+                    tool_call_name=tool_call["name"],
+                    parent_message_id=msg_id,
+                    timestamp=get_timestamp(),
                 )
             )
-            yield sse_event(ToolCallArgsEvent(tool_call_id=tool_call_id, delta=json.dumps(tool_call["args"])))
+            yield sse_event(
+                ToolCallArgsEvent(
+                    tool_call_id=tool_call_id, delta=json.dumps(tool_call["args"]), timestamp=get_timestamp()
+                )
+            )
+            await asyncio.sleep(0)
             tc_exec_res = await session.call_tool(tool_call["name"], tool_call["args"])
 
             if tc_exec_res.structuredContent:
@@ -144,7 +159,11 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
                     tool_results_str = json.dumps(tc_exec_res.structuredContent)
                 yield sse_event(
                     ToolCallResultEvent(
-                        message_id=msg_id, tool_call_id=tool_call_id, content=tool_results_str, role="tool"
+                        message_id=msg_id,
+                        tool_call_id=tool_call_id,
+                        content=tool_results_str,
+                        role="tool",
+                        timestamp=get_timestamp(),
                     )
                 )
             elif tc_exec_res.content:
@@ -154,7 +173,11 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
                         # Stream the raw tool text back to the UI, and record it for fallback summarization
                         yield sse_event(
                             ToolCallResultEvent(
-                                message_id=msg_id, tool_call_id=tool_call_id, content=resp_content.text, role="tool"
+                                message_id=msg_id,
+                                tool_call_id=tool_call_id,
+                                content=resp_content.text,
+                                role="tool",
+                                timestamp=get_timestamp(),
                             )
                         )
                         try:
@@ -163,7 +186,8 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
                         except Exception as exc:
                             logger.exception("Failed to record tool text output: %s", exc)
 
-            yield sse_event(ToolCallEndEvent(tool_call_id=tool_call_id))
+            yield sse_event(ToolCallEndEvent(tool_call_id=tool_call_id, timestamp=get_timestamp()))
+            await asyncio.sleep(0)
 
     # Handle if there were tool calls output, but no search results: ask the LLM to summarize tools outputs
     if tc_llm_resp.tool_calls and search_results.total_found == 0 and tool_text_outputs:
@@ -191,7 +215,11 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
             # NOTE: use TextMessageChunkEvent?
             yield sse_event(
                 ToolCallResultEvent(
-                    message_id=msg_id, tool_call_id=fallback_tool_id, content=str(summary_resp.content), role="tool"
+                    message_id=msg_id,
+                    tool_call_id=fallback_tool_id,
+                    content=str(summary_resp.content),
+                    role="tool",
+                    timestamp=get_timestamp(),
                 )
             )
             yield sse_event(ToolCallEndEvent(tool_call_id=fallback_tool_id))
@@ -201,8 +229,8 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
 
     # Step 3: If no results found or no tool calls, handle early exit
     if not tc_llm_resp.tool_calls or search_results.total_found == 0:
-        yield sse_event(TextMessageEndEvent(message_id=msg_id))
-        yield sse_event(RunFinishedEvent(thread_id=request.thread_id, run_id=request.run_id))
+        yield sse_event(TextMessageEndEvent(message_id=msg_id, timestamp=get_timestamp()))
+        yield sse_event(RunFinishedEvent(thread_id=request.thread_id, run_id=request.run_id, timestamp=get_timestamp()))
         return
 
     # print(json.dumps(search_results.model_dump(), indent=2))
@@ -214,8 +242,10 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
             tool_call_id=rerank_tc_id,
             tool_call_name="rerank_results",
             parent_message_id=msg_id,
+            timestamp=get_timestamp(),
         )
     )
+    await asyncio.sleep(0)
     final_response = await rerank_search_results(
         llm,
         msgs,
@@ -228,11 +258,12 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
             tool_call_id=rerank_tc_id,
             content=final_response.model_dump_json(by_alias=True),
             role="tool",
+            timestamp=get_timestamp(),
         )
     )
-    yield sse_event(ToolCallEndEvent(tool_call_id=rerank_tc_id))
-    yield sse_event(TextMessageEndEvent(message_id=msg_id))
-    yield sse_event(RunFinishedEvent(thread_id=request.thread_id, run_id=request.run_id))
+    yield sse_event(ToolCallEndEvent(tool_call_id=rerank_tc_id, timestamp=get_timestamp()))
+    yield sse_event(TextMessageEndEvent(message_id=msg_id, timestamp=get_timestamp()))
+    yield sse_event(RunFinishedEvent(thread_id=request.thread_id, run_id=request.run_id, timestamp=get_timestamp()))
     file_logger.info(
         json.dumps(
             {
