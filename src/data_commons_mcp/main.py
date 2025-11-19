@@ -104,7 +104,6 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
     token_usage = TokenUsageMetadata()
     yield sse_event(RunStartedEvent(thread_id=request.thread_id, run_id=request.run_id, timestamp=get_timestamp()))
     yield sse_event(TextMessageStartEvent(message_id=msg_id, role="assistant", timestamp=get_timestamp()))
-    await asyncio.sleep(0)  # Ensure events are flushed to client
 
     # Get tools from the MCP client
     tools = await mcp_client.get_tools()
@@ -146,7 +145,6 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
                     tool_call_id=tool_call_id, delta=json.dumps(tool_call["args"]), timestamp=get_timestamp()
                 )
             )
-            await asyncio.sleep(0)
             tc_exec_res = await session.call_tool(tool_call["name"], tool_call["args"])
 
             if tc_exec_res.structuredContent:
@@ -187,7 +185,6 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
                             logger.exception("Failed to record tool text output: %s", exc)
 
             yield sse_event(ToolCallEndEvent(tool_call_id=tool_call_id, timestamp=get_timestamp()))
-            await asyncio.sleep(0)
 
     # Handle if there were tool calls output, but no search results: ask the LLM to summarize tools outputs
     if tc_llm_resp.tool_calls and search_results.total_found == 0 and tool_text_outputs:
@@ -245,7 +242,6 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
             timestamp=get_timestamp(),
         )
     )
-    await asyncio.sleep(0)
     final_response = await rerank_search_results(
         llm,
         msgs,
