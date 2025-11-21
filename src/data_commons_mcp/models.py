@@ -46,6 +46,8 @@ class SearchHitSrc(BaseModel):
 
     doi: str | None = None
     url: str | None = None
+    _harvest_url: str
+    _repo: str
     titles: list[SearchHitSrcTitle] = Field(default_factory=list)
     descriptions: list[SearchHitSrcDescription] = Field(default_factory=list)
     publication_year: str | None = Field(None, alias="publicationYear")
