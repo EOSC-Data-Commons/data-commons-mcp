@@ -46,7 +46,7 @@ class SearchHitSrc(BaseModel):
 
     doi: str | None = None
     url: str | None = None
-    harvest_url: str = Field(..., alias="_harvest_url")
+    harvest_url: str = Field(..., alias="_harvestUrl")
     repo: str = Field(..., alias="_repo")
     titles: list[SearchHitSrcTitle] = Field(default_factory=list)
     descriptions: list[SearchHitSrcDescription] = Field(default_factory=list)
