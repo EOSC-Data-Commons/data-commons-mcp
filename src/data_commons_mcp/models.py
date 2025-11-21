@@ -46,8 +46,8 @@ class SearchHitSrc(BaseModel):
 
     doi: str | None = None
     url: str | None = None
-    _harvest_url: str
-    _repo: str
+    harvest_url: str = Field(..., alias="_harvest_url")
+    repo: str = Field(..., alias="_repo")
     titles: list[SearchHitSrcTitle] = Field(default_factory=list)
     descriptions: list[SearchHitSrcDescription] = Field(default_factory=list)
     publication_year: str | None = Field(None, alias="publicationYear")
@@ -55,6 +55,8 @@ class SearchHitSrc(BaseModel):
     subjects: list[SearchHitSrcSubject] | None = None
     creators: list[SearchHitSrcCreator] | None = None
     resource_type: str = Field("dataset", alias="resourceType")
+
+    model_config = {"populate_by_name": True}
 
 
 # https://github.com/EOSC-Data-Commons/metadata-warehouse/blob/main/src/config/opensearch_mapping.json

@@ -133,7 +133,6 @@ async def search_data(
         total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
         hits=[SearchHit(**hit) for hit in resp.get("hits", {}).get("hits", [])],
     )
-    # await get_relevant_tools(res)
     # print(f"Processed OpenSearch results: {res}")
     return res
 
