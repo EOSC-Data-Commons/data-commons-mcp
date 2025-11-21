@@ -17,7 +17,7 @@ The HTTP API comprises 2 main endpoints:
   - Uses Streamable HTTP transport
   - Available tools:
     - [x] Search datasets
-    - [x] Get metadata for the files in a dataset (name, description, type)
+    - [x] Get metadata for the files in a dataset (name, description, type of files)
     - [ ] Search tools
     - [ ] Search citations related to datasets or tools
 - `/chat`: **HTTP POST** endpoint (JSON) for chatting with the MCP server tools via an LLM provider (API key provided through env variable at deployment)

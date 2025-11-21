@@ -114,6 +114,8 @@ async def search_data(
             "dates",
             "publicationYear",
             "creators",
+            "_harvest_url",
+            "_repo",
         ],
         "query": {
             "knn": {
