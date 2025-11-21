@@ -1,4 +1,5 @@
 import argparse
+import json
 from typing import Any
 from urllib.parse import quote
 
@@ -127,13 +128,13 @@ async def search_data(
         resp = opensearch_client.search(index=settings.opensearch_index, body=body)
     except Exception as e:
         raise Exception(f"OpenSearch query failed: {e}") from e
-    # print(f"OpenSearch response: {json.dumps(resp, indent=2)}")
+    print(f"OpenSearch response: {json.dumps(resp, indent=2)}")
     # Extract hits from OpenSearch response
     res = OpenSearchResults(
         total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
         hits=[SearchHit(**hit) for hit in resp.get("hits", {}).get("hits", [])],
     )
-    # print(f"Processed OpenSearch results: {res}")
+    print(f"Processed OpenSearch results: {res}")
     return res
 
 
