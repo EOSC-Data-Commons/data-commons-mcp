@@ -5,9 +5,9 @@ import httpx
 import pytest
 from ag_ui.core import RunStartedEvent
 
-from data_commons_mcp.config import settings
-from data_commons_mcp.main import get_relevant_tools
-from data_commons_mcp.models import RankedSearchResponse, SearchHit
+from data_commons_search.config import settings
+from data_commons_search.main import get_relevant_tools
+from data_commons_search.models import RankedSearchResponse, SearchHit
 
 
 class ExpectedResult(TypedDict):
