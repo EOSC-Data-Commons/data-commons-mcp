@@ -1,13 +1,11 @@
-# 🔭 EOSC Data Commons MCP server
+# 🔭 EOSC Data Commons Search server
 
-[![Build](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/build.yml/badge.svg)](https://github.com/EOSC-Data-Commons/data-commons-mcp/actions/workflows/build.yml)
-[![Docker image](https://img.shields.io/badge/docker-ghcr.io-blue.svg?logo=docker)](https://github.com/EOSC-Data-Commons/data-commons-mcp/pkgs/container/data-commons-mcp)
-[![PyPI - Version](https://img.shields.io/pypi/v/data-commons-mcp.svg?logo=pypi&label=PyPI&logoColor=silver)](https://pypi.org/project/data-commons-mcp/)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/data-commons-mcp.svg?logo=python&label=Python&logoColor=silver)](https://pypi.org/project/data-commons-mcp/)
+[![Build](https://github.com/EOSC-Data-Commons/data-commons-search/actions/workflows/build.yml/badge.svg)](https://github.com/EOSC-Data-Commons/data-commons-search/actions/workflows/build.yml)
+[![Docker image](https://img.shields.io/badge/docker-ghcr.io-blue.svg?logo=docker)](https://github.com/EOSC-Data-Commons/data-commons-search/pkgs/container/data-commons-search)
+[![PyPI - Version](https://img.shields.io/pypi/v/data-commons-search.svg?logo=pypi&label=PyPI&logoColor=silver)](https://pypi.org/project/data-commons-search/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/data-commons-search.svg?logo=python&label=Python&logoColor=silver)](https://pypi.org/project/data-commons-search/)
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server exposing an HTTP POST endpoint to access data from various open-access data publishers, developed for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/).
-
-It uses a search API, and a Large Language Model (LLM) to help users find the datasets and tools they need.
+A server for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/) MatchMaker service, providing natural language search over open-access datasets. It exposes an HTTP POST endpoint and supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) to help users discover datasets and tools via a Large Language Model–assisted search.
 
 ## 🧩 Endpoints
 
@@ -48,7 +46,7 @@ Your VSCode `mcp.json` should look like:
 ```json
 {
     "servers": {
-        "data-commons-mcp-http": {
+        "data-commons-search-http": {
             "url": "http://localhost:8000/mcp",
             "type": "http"
         }
@@ -62,10 +60,10 @@ Or with STDIO transport:
 ```json
 {
    "servers": {
-      "data-commons-mcp": {
+      "data-commons-search": {
          "type": "stdio",
          "command": "uvx",
-         "args": ["data-commons-mcp"],
+         "args": ["data-commons-search"],
          "env": {
             "OPENSEARCH_URL": "OPENSEARCH_URL"
          }
@@ -79,14 +77,14 @@ Or using local folder for development:
 ```json
 {
    "servers": {
-      "data-commons-mcp": {
+      "data-commons-search": {
          "type": "stdio",
-         "cwd": "~/dev/data-commons-mcp",
+         "cwd": "~/dev/data-commons-search",
          "env": {
             "OPENSEARCH_URL": "OPENSEARCH_URL"
          },
          "command": "uv",
-         "args": ["run", "data-commons-mcp"]
+         "args": ["run", "data-commons-search"]
       }
    }
 }
@@ -161,7 +159,7 @@ SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_co
 > To build and integrate the frontend web app to the server, from the [frontend folder](https://github.com/EOSC-Data-Commons/eoscdcpoc) run:
 >
 > ```sh
-> npm run build && rm -rf ../data-commons-mcp/src/data_commons_mcp/webapp/ && cp -R dist/spa/ ../data-commons-mcp/src/data_commons_mcp/webapp/
+> npm run build && rm -rf ../data-commons-search/src/data_commons_mcp/webapp/ && cp -R dist/spa/ ../data-commons-search/src/data_commons_mcp/webapp/
 > ```
 >
 
@@ -188,14 +186,14 @@ SEARCH_API_KEY=SECRET_KEY_YOU_CAN_USE_IN_FRONTEND_TO_AVOID_SPAM
 >
 > `SEARCH_API_KEY` can be used to add a layer of protection against bots that might spam the LLM, if not provided no API key will be needed to query the API.
 
-You can use the prebuilt docker image [`ghcr.io/eosc-data-commons/data-commons-mcp:main`](https://github.com/EOSC-Data-Commons/data-commons-mcp/pkgs/container/data-commons-mcp)
+You can use the prebuilt docker image [`ghcr.io/eosc-data-commons/data-commons-search:main`](https://github.com/EOSC-Data-Commons/data-commons-search/pkgs/container/data-commons-search)
 
 Example `compose.yml`:
 
 ```yaml
 services:
   mcp:
-    image: ghcr.io/eosc-data-commons/data-commons-mcp:main
+    image: ghcr.io/eosc-data-commons/data-commons-search:main
     ports:
       - "127.0.0.1:8000:8000"
     environment:

@@ -143,9 +143,11 @@ async def test_get_relevant_tools() -> None:
     dummy_search_hits = [
         SearchHit.model_validate(
             {
-                "id": "https://doi.org/10.17026/PT/PIYWW5",
+                "id": "https://doi.org/10.17026/DANS-XTQ-AJZS",
                 "source": {
-                    "doi": "10.17026/PT/PIYWW5",
+                    "_repo": "DANS",
+                    "_harvestUrl": "https://example.org/harvest",
+                    "doi": "10.17026/DANS-XTQ-AJZS",
                     "url": None,
                     "titles": [
                         {
@@ -171,9 +173,10 @@ async def test_get_relevant_tools() -> None:
     ]
     # search_res = RankedSearchResponse.model_validate(dummy_search_res)
     await get_relevant_tools(dummy_search_hits)
-    # print(docs)
+    print(dummy_search_hits)
     assert len(dummy_search_hits) >= 1
     for hit in dummy_search_hits:
+        print(f"Hit {hit.id} has file extensions: {hit.file_extensions}")
         assert hit.file_extensions and len(hit.file_extensions) >= 1
 
 

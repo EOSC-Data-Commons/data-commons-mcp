@@ -67,7 +67,7 @@ if settings.cors_enabled:
 
 mcp_client = MultiServerMCPClient(
     {
-        "data-commons-mcp": {
+        "data-commons-search": {
             "url": f"{settings.server_url}/mcp",
             "transport": "streamable_http",
         }
@@ -133,7 +133,7 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
     # Step 2: Execute each tool and collect search results and textual outputs
     search_results = OpenSearchResults(total_found=0, hits=[])
     tool_text_outputs: list[str] = []
-    async with mcp_client.session("data-commons-mcp") as session:
+    async with mcp_client.session("data-commons-search") as session:
         for tool_call in tc_llm_resp.tool_calls:
             tool_call_id = tool_call["name"]
             yield sse_event(

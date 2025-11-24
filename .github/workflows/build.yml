@@ -97,7 +97,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/eosc-data-commons/data-commons-mcp
+          images: ghcr.io/eosc-data-commons/data-commons-search
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -115,7 +115,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # outputs: type=image,name=ghcr.io/eosc-data-commons/data-commons-mcp,push-by-digest=true,name-canonical=true,push=true
+          # outputs: type=image,name=ghcr.io/eosc-data-commons/data-commons-search,push-by-digest=true,name-canonical=true,push=true
 
 
   generate-changelog:

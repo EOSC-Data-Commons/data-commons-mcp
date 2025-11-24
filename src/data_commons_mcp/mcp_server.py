@@ -238,9 +238,7 @@ def cli() -> None:
     )
     parser.add_argument("--http", action="store_true", help="Use Streamable HTTP transport")
     parser.add_argument("--port", type=int, default=8888, help="Port to run the server on")
-    # parser.add_argument("settings_filepath", type=str, nargs="?", default="sparql-mcp.json", help="Path to settings file")
     args = parser.parse_args()
-    # settings = Settings.from_file(args.settings_filepath)
     if args.http:
         mcp.run()
         mcp.settings.port = args.port
