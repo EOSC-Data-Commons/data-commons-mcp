@@ -2,8 +2,7 @@
 
 [![Build](https://github.com/EOSC-Data-Commons/data-commons-search/actions/workflows/build.yml/badge.svg)](https://github.com/EOSC-Data-Commons/data-commons-search/actions/workflows/build.yml)
 [![Docker image](https://img.shields.io/badge/docker-ghcr.io-blue.svg?logo=docker)](https://github.com/EOSC-Data-Commons/data-commons-search/pkgs/container/data-commons-search)
-[![PyPI - Version](https://img.shields.io/pypi/v/data-commons-search.svg?logo=pypi&label=PyPI&logoColor=silver)](https://pypi.org/project/data-commons-search/)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/data-commons-search.svg?logo=python&label=Python&logoColor=silver)](https://pypi.org/project/data-commons-search/)
+<!-- [![PyPI - Version](https://img.shields.io/pypi/v/data-commons-search.svg?logo=pypi&label=PyPI&logoColor=silver)](https://pypi.org/project/data-commons-search/) [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/data-commons-search.svg?logo=python&label=Python&logoColor=silver)](https://pypi.org/project/data-commons-search/) -->
 
 A server for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/) MatchMaker service, providing natural language search over open-access datasets. It exposes an HTTP POST endpoint and supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) to help users discover datasets and tools via a Large Language Model–assisted search.
 
@@ -126,7 +125,7 @@ OPENROUTER_API_KEY=YOUR_API_KEY
 Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp
 
 ```sh
-uv run uvicorn src.data_commons_mcp.main:app --log-config logging.yml --reload
+uv run uvicorn src.data_commons_search.main:app --log-config logging.yml --reload
 ```
 
 > Default `OPENSEARCH_URL=http://localhost:9200`
@@ -134,7 +133,7 @@ uv run uvicorn src.data_commons_mcp.main:app --log-config logging.yml --reload
 Customize server configuration through environment variables:
 
 ```sh
-SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_commons_mcp.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload
+SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload
 ```
 
 > [!TIP]
@@ -159,7 +158,7 @@ SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_co
 > To build and integrate the frontend web app to the server, from the [frontend folder](https://github.com/EOSC-Data-Commons/eoscdcpoc) run:
 >
 > ```sh
-> npm run build && rm -rf ../data-commons-search/src/data_commons_mcp/webapp/ && cp -R dist/spa/ ../data-commons-search/src/data_commons_mcp/webapp/
+> npm run build && rm -rf ../data-commons-search/src/data_commons_search/webapp/ && cp -R dist/spa/ ../data-commons-search/src/data_commons_search/webapp/
 > ```
 >
 
@@ -214,7 +213,7 @@ docker compose up
 > When a push is made the workflow will:
 >
 > - Pull the `main` branch from the frontend repository
-> - Build the frontend, and add it to `src/data_commons_mcp/webapp`
+> - Build the frontend, and add it to `src/data_commons_search/webapp`
 > - Build the docker image for the server
 > - Publish the docker image as `main`/`latest`
 > - The staging infrastructure then automatically pull the `latest` version of the image and deploys it.

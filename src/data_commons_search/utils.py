@@ -10,11 +10,11 @@ from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessag
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, SecretStr
 
-from data_commons_mcp.config import settings
-from data_commons_mcp.models import AgentMsg
+from data_commons_search.config import settings
+from data_commons_search.models import AgentMsg
 
-# Disable logger in your code with `logging.getLogger("data_commons_mcp").setLevel(logging.WARNING)`
-logger = logging.getLogger("data_commons_mcp")
+# Disable logger in your code with `logging.getLogger("data_commons_search").setLevel(logging.WARNING)`
+logger = logging.getLogger("data_commons_search")
 logger.setLevel(logging.INFO)
 # handler = logging.StreamHandler()
 # formatter = logging.Formatter("\x1b[90m%(asctime)s\x1b[0m [%(levelname)s] %(message)s")

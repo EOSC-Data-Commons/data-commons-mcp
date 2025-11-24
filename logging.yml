@@ -4,10 +4,10 @@ disable_existing_loggers: False
 formatters:
   default:
     # Use the local ColoredFormatter to add ANSI colors to the levelname
-    (): data_commons_mcp.logging.ColoredFormatter
+    (): data_commons_search.logging.ColoredFormatter
     format: "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
   access:
-    (): data_commons_mcp.logging.ColoredFormatter
+    (): data_commons_search.logging.ColoredFormatter
     format: "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
 
 handlers:

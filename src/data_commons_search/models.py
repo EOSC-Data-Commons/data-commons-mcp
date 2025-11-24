@@ -2,10 +2,9 @@
 
 import uuid
 
+from data_commons_mcp.config import settings
 from langchain.messages import AIMessage
 from pydantic import BaseModel, Field, computed_field
-
-from data_commons_mcp.config import settings
 
 # OpenSearch result models
 

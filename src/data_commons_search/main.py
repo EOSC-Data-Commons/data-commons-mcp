@@ -28,10 +28,10 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, StreamingResponse
 from starlette.staticfiles import StaticFiles
 
-from data_commons_mcp.config import settings
-from data_commons_mcp.logging import BLUE, BOLD, RESET, YELLOW
-from data_commons_mcp.mcp_server import mcp
-from data_commons_mcp.models import (
+from data_commons_search.config import settings
+from data_commons_search.logging import BLUE, BOLD, RESET, YELLOW
+from data_commons_search.mcp_server import mcp
+from data_commons_search.models import (
     AgentInput,
     FileMetrixExtensionsResponse,
     LangChainRerankingOutputMsg,
@@ -43,8 +43,8 @@ from data_commons_mcp.models import (
     TokenUsageMetadata,
     ToolRegistryTool,
 )
-from data_commons_mcp.prompts import RERANK_PROMPT, SUMMARIZE_PROMPT, TOOL_CALL_PROMPT
-from data_commons_mcp.utils import (
+from data_commons_search.prompts import RERANK_PROMPT, SUMMARIZE_PROMPT, TOOL_CALL_PROMPT
+from data_commons_search.utils import (
     file_logger,
     get_langchain_msgs,
     get_system_prompt,
@@ -349,14 +349,14 @@ async def rerank_search_results(
 # Serve website built using vite
 app.mount(
     "/assets",
-    StaticFiles(directory="src/data_commons_mcp/webapp/assets"),
+    StaticFiles(directory="src/data_commons_search/webapp/assets"),
     name="static",
 )
 
 
 async def ui_handler(request: Request) -> FileResponse:
     """Serve the chat UI HTML file directly."""
-    return FileResponse("src/data_commons_mcp/webapp/index.html")
+    return FileResponse("src/data_commons_search/webapp/index.html")
 
 
 # Serve index.html for root and any other unmatched GET paths, so a SPA can handle routing

@@ -4,16 +4,15 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from fastembed import TextEmbedding
-from mcp.server.fastmcp import FastMCP
-from opensearchpy import OpenSearch
-
 from data_commons_mcp.config import settings
 from data_commons_mcp.models import (
     FileMetrixFilesResponse,
     OpenSearchResults,
     SearchHit,
 )
+from fastembed import TextEmbedding
+from mcp.server.fastmcp import FastMCP
+from opensearchpy import OpenSearch
 
 # Create MCP server https://github.com/modelcontextprotocol/python-sdk
 mcp = FastMCP(

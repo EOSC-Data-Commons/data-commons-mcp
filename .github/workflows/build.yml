@@ -43,7 +43,7 @@ jobs:
 
     - name: Start server
       run: |
-        SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_commons_mcp.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload &
+        SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload &
         sleep 10
 
     - name: Run tests
@@ -80,8 +80,8 @@ jobs:
           cd eoscdcpoc
           npm ci
           npm run build
-          rm -rf ../src/data_commons_mcp/webapp/
-          cp -R dist/spa/ ../src/data_commons_mcp/webapp/
+          rm -rf ../src/data_commons_search/webapp/
+          cp -R dist/spa/ ../src/data_commons_search/webapp/
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3

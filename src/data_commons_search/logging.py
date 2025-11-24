@@ -30,7 +30,7 @@ class ColoredFormatter(logging.Formatter):
     """Formatter that colors the levelname using ANSI escape sequences.
 
     Usage in dictConfig / YAML config: use the special `()` key to point
-    at this class, e.g. `() : data_commons_mcp.logging.ColoredFormatter`.
+    at this class, e.g. `() : data_commons_search.logging.ColoredFormatter`.
     """
 
     def __init__(self, fmt: str | None = None, datefmt: str | None = None, style: Literal["%", "{", "$"] = "%"):

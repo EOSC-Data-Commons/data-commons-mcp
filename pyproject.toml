@@ -75,14 +75,14 @@ Tracker = "https://github.com/EOSC-Data-Commons/data-commons-search/issues"
 Source = "https://github.com/EOSC-Data-Commons/data-commons-search"
 
 [project.scripts]
-data-commons-search = "data_commons_mcp.mcp_server:cli"
+data-commons-search = "data_commons_search.mcp_server:cli"
 
 ## TOOLS
 [tool.hatch.version]
-path = "src/data_commons_mcp/__init__.py"
+path = "src/data_commons_search/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/data_commons_mcp"]
+packages = ["src/data_commons_search"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
