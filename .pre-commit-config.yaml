@@ -29,8 +29,6 @@ repos:
     hooks:
     - id: mypy
       name: " 🔎 Check types with mypy"
-  #     args:
-  #     - --config-file=pyproject.toml
 
 ci:
     autofix_commit_msg: 🎨 [pre-commit] Auto format
