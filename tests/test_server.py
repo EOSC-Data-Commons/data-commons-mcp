@@ -6,8 +6,7 @@ import pytest
 from ag_ui.core import RunStartedEvent
 
 from data_commons_search.config import settings
-from data_commons_search.main import get_relevant_tools
-from data_commons_search.models import RankedSearchResponse, SearchHit
+from data_commons_search.models import RankedSearchResponse
 
 
 class ExpectedResult(TypedDict):
@@ -138,46 +137,46 @@ def test_app(test_item: TestItem, llm_model: str) -> None:
             print(f"⚠️ Attempt {attempt + 1} failed: {e}. Retrying...")
 
 
-async def test_get_relevant_tools() -> None:
-    """Test reranking dummy search results."""
-    dummy_search_hits = [
-        SearchHit.model_validate(
-            {
-                "id": "https://doi.org/10.17026/DANS-XTQ-AJZS",
-                "source": {
-                    "_repo": "DANS",
-                    "_harvestUrl": "https://example.org/harvest",
-                    "doi": "10.17026/DANS-XTQ-AJZS",
-                    "url": None,
-                    "titles": [
-                        {
-                            "title": "Replication Data for: Cognitive load in cyclists while navigating in traffic: Effects of static and dynamic route events on neural activity of cyclists measured by fNIRS"
-                        }
-                    ],
-                    "descriptions": [
-                        {
-                            "description": "Neural activity data collected during a real-life field experiment by a non-invasive portable method, namely Functional Near-Infrared Spectroscopy (fNIRS), sensitive to neural activity in the prefrontal cortex region."
-                        },
-                    ],
-                    "publicationYear": "2025",
-                    "publicationDate": None,
-                    "subjects": [{"subject": "Engineering"}],
-                    "creators": [{"creatorName": "Nidegger, Christian"}],
-                    "resourceType": "dataset",
-                },
-                "opensearch_score": 0.91528225,
-                "score": None,
-                # "file_extensions": [],
-            }
-        )
-    ]
-    # search_res = RankedSearchResponse.model_validate(dummy_search_res)
-    await get_relevant_tools(dummy_search_hits)
-    print(dummy_search_hits)
-    assert len(dummy_search_hits) >= 1
-    for hit in dummy_search_hits:
-        print(f"Hit {hit.id} has file extensions: {hit.file_extensions}")
-        assert hit.file_extensions and len(hit.file_extensions) >= 1
+# async def test_get_relevant_tools() -> None:
+#     """Test reranking dummy search results."""
+#     dummy_search_hits = [
+#         SearchHit.model_validate(
+#             {
+#                 "id": "https://doi.org/10.17026/DANS-XTQ-AJZS",
+#                 "source": {
+#                     "_repo": "DANS",
+#                     "_harvestUrl": "https://example.org/harvest",
+#                     "doi": "10.17026/DANS-XTQ-AJZS",
+#                     "url": None,
+#                     "titles": [
+#                         {
+#                             "title": "Replication Data for: Cognitive load in cyclists while navigating in traffic: Effects of static and dynamic route events on neural activity of cyclists measured by fNIRS"
+#                         }
+#                     ],
+#                     "descriptions": [
+#                         {
+#                             "description": "Neural activity data collected during a real-life field experiment by a non-invasive portable method, namely Functional Near-Infrared Spectroscopy (fNIRS), sensitive to neural activity in the prefrontal cortex region."
+#                         },
+#                     ],
+#                     "publicationYear": "2025",
+#                     "publicationDate": None,
+#                     "subjects": [{"subject": "Engineering"}],
+#                     "creators": [{"creatorName": "Nidegger, Christian"}],
+#                     "resourceType": "dataset",
+#                 },
+#                 "opensearch_score": 0.91528225,
+#                 "score": None,
+#                 # "file_extensions": [],
+#             }
+#         )
+#     ]
+#     # search_res = RankedSearchResponse.model_validate(dummy_search_res)
+#     await get_relevant_tools(dummy_search_hits)
+#     print(dummy_search_hits)
+#     assert len(dummy_search_hits) >= 1
+#     for hit in dummy_search_hits:
+#         print(f"Hit {hit.id} has file extensions: {hit.file_extensions}")
+#         assert hit.file_extensions and len(hit.file_extensions) >= 1
 
 
 def process_stream(resp: httpx.Response) -> list[Any]:

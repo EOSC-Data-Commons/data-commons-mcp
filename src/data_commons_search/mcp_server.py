@@ -34,10 +34,7 @@ opensearch_client = OpenSearch(hosts=[settings.opensearch_url])
 
 @mcp.tool()
 async def search_data(
-    search_input: str,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    # creator_name: str | None = None
+    search_input: str, start_date: str | None = None, end_date: str | None = None, creator_name: str | None = None
 ) -> OpenSearchResults:
     """Search for data relevant to the user question.
 
@@ -81,22 +78,22 @@ async def search_data(
         )
 
     # Glucose level changes in the liver of individuals with type 1 diabetes from 1980 to 2020 by Westerink
-    # if creator_name:
-    #     filters.append(
-    #         {
-    #             "nested": {
-    #                 "path": "creators",
-    #                 "query": {
-    #                     "wildcard": {
-    #                         "creators.creatorName": {
-    #                             "value": f"*{creator_name}*",
-    #                             "case_insensitive": True,
-    #                         }
-    #                     }
-    #                 },
-    #             }
-    #         }
-    #     )
+    if creator_name:
+        filters.append(
+            {
+                "nested": {
+                    "path": "creators",
+                    "query": {
+                        "wildcard": {
+                            "creators.creatorName": {
+                                "value": f"*{creator_name}*",
+                                "case_insensitive": True,
+                            }
+                        }
+                    },
+                }
+            }
+        )
 
     emb: dict[str, Any] = {
         "vector": embedding,
