@@ -1,5 +1,4 @@
 import argparse
-import json
 from typing import Any
 from urllib.parse import quote
 
@@ -125,7 +124,7 @@ async def search_data(
             }
         },
     }
-    logger.debug(f"OpenSearch query body: {json.dumps(body, indent=2)}")
+    # logger.debug(f"OpenSearch query body: {json.dumps(body, indent=2)}")
     try:
         resp = opensearch_client.search(index=settings.opensearch_index, body=body)
     except Exception as e:
