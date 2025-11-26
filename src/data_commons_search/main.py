@@ -1,13 +1,10 @@
 """HTTP API to deploy the EOSC Data Commons search agent."""
 
-import asyncio
 import json
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
-from urllib.parse import quote, unquote, urlparse
 
-import httpx
 from ag_ui.core import (
     RunFinishedEvent,
     RunStartedEvent,
@@ -33,15 +30,12 @@ from data_commons_search.logging import BLUE, BOLD, RESET, YELLOW
 from data_commons_search.mcp_server import mcp
 from data_commons_search.models import (
     AgentInput,
-    FileMetrixExtensionsResponse,
     LangChainRerankingOutputMsg,
     LangChainResponseMetadata,
     OpenSearchResults,
     RankedSearchResponse,
     RerankingOutput,
-    SearchHit,
     TokenUsageMetadata,
-    ToolRegistryTool,
 )
 from data_commons_search.prompts import RERANK_PROMPT, SUMMARIZE_PROMPT, TOOL_CALL_PROMPT
 from data_commons_search.utils import (
@@ -335,7 +329,7 @@ async def rerank_search_results(
 
         # Sort hits by score in descending order
         reranked_hits.sort(key=lambda h: h.score or 0.0, reverse=True)
-        await get_relevant_tools(reranked_hits)
+        # await get_relevant_tools(reranked_hits)
         return RankedSearchResponse(summary=rerank_resp.parsed.summary, hits=reranked_hits)
     except Exception as e:
         logger.error(f"Reranking failed: {e}")
@@ -368,93 +362,94 @@ app.router.add_route("/{path:path}", ui_handler, methods=["GET"])
 # Data to Monitor Soil Aggregate Breakdown
 # Data on fair evaluation
 
+# NOTE: commented out for now as this is done directly from the frontend when a user show interest for a dataset (e.g. clicks on it)
 
-# https://confluence.egi.eu/display/EOSCDATACOMMONS/API+Definitions+and+Implementation+Guidelines
-# https://dev.matchmaker.eosc-data-commons.eu/search?q=search for data about Cognitive load in cyclists while navigating in traffic&model=einfracz%2Fqwen3-coder
-# curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "Datasets about representation of dogs in medieval time"}], "model": "einfracz/qwen3-coder", "stream": true}'
-# curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Harelbeke Evolis"}], "model": "einfracz/qwen3-coder", "stream": true}'
-# curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Cognitive load in cyclists while navigating in traffic"}], "model": "einfracz/qwen3-coder", "stream": true}'
-async def get_relevant_tools(search_hits: list[SearchHit]) -> None:
-    """Fetch file extensions and relevant tools from the FileMetrix API in parallel for each hit's DOI,
-    and update hits in-place.
+# # https://confluence.egi.eu/display/EOSCDATACOMMONS/API+Definitions+and+Implementation+Guidelines
+# # https://dev.matchmaker.eosc-data-commons.eu/search?q=search for data about Cognitive load in cyclists while navigating in traffic&model=einfracz%2Fqwen3-coder
+# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "Datasets about representation of dogs in medieval time"}], "model": "einfracz/qwen3-coder", "stream": true}'
+# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Harelbeke Evolis"}], "model": "einfracz/qwen3-coder", "stream": true}'
+# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Cognitive load in cyclists while navigating in traffic"}], "model": "einfracz/qwen3-coder", "stream": true}'
+# async def get_relevant_tools(search_hits: list[SearchHit]) -> None:
+#     """Fetch file extensions and relevant tools from the FileMetrix API in parallel for each hit's DOI,
+#     and update hits in-place.
 
-    Args:
-        search_results: The OpenSearch results to enhance with file extensions and relevant tools.
-    """
+#     Args:
+#         search_results: The OpenSearch results to enhance with file extensions and relevant tools.
+#     """
 
-    async def fetch_extensions(client: httpx.AsyncClient, doi: str) -> FileMetrixExtensionsResponse | None:
-        """Fetch extensions for a single DOI."""
-        try:
-            encoded = quote(doi, safe="")
-            resp = await client.get(
-                f"{settings.filemetrix_api}/extensions/{encoded}",
-                headers={"accept": "application/json"},
-            )
-            if resp.status_code == 200:
-                return FileMetrixExtensionsResponse.model_validate(resp.json())
-            logger.warning(f"FileMetrix returned {resp.status_code} for DOI {doi}")
-        except Exception as e:
-            logger.warning(f"FileMetrix fetch error for {doi}: {e}")
-        return None
+#     async def fetch_extensions(client: httpx.AsyncClient, doi: str) -> FileMetrixExtensionsResponse | None:
+#         """Fetch extensions for a single DOI."""
+#         try:
+#             encoded = quote(doi, safe="")
+#             resp = await client.get(
+#                 f"{settings.filemetrix_api}/extensions/{encoded}",
+#                 headers={"accept": "application/json"},
+#             )
+#             if resp.status_code == 200:
+#                 return FileMetrixExtensionsResponse.model_validate(resp.json())
+#             logger.warning(f"FileMetrix returned {resp.status_code} for DOI {doi}")
+#         except Exception as e:
+#             logger.warning(f"FileMetrix fetch error for {doi}: {e}")
+#         return None
 
-    async def fetch_tools_for_extension(client: httpx.AsyncClient, extension: str) -> list[dict[str, str]] | None:
-        """Fetch relevant tools for a file extension from the tool registry."""
-        try:
-            resp = await client.get(
-                f"{settings.tool_registry_api}/input/{extension}",
-                headers={"accept": "application/json"},
-            )
-            if resp.status_code == 200:
-                return resp.json()
-            logger.warning(f"Tool registry returned {resp.status_code} for extension {extension}")
-        except Exception as e:
-            logger.warning(f"Tool registry fetch error for {extension}: {e}")
-        return None
+#     async def fetch_tools_for_extension(client: httpx.AsyncClient, extension: str) -> list[dict[str, str]] | None:
+#         """Fetch relevant tools for a file extension from the tool registry."""
+#         try:
+#             resp = await client.get(
+#                 f"{settings.tool_registry_api}/input/{extension}",
+#                 headers={"accept": "application/json"},
+#             )
+#             if resp.status_code == 200:
+#                 return resp.json()
+#             logger.warning(f"Tool registry returned {resp.status_code} for extension {extension}")
+#         except Exception as e:
+#             logger.warning(f"Tool registry fetch error for {extension}: {e}")
+#         return None
 
-    # Extract DOI from hit and create fetch task
-    async def process_hit(client: httpx.AsyncClient, hit: SearchHit) -> None:
-        """Extract DOI from hit and fetch/apply extensions and relevant tools."""
-        doi = None
-        try:
-            if hit.id.startswith("http"):
-                parsed = urlparse(hit.id)
-                if "doi.org" in parsed.netloc:
-                    doi = unquote(parsed.path.lstrip("/"))
-            else:
-                doi = hit.id
-        except Exception:
-            return
-        if not doi:
-            return
+#     # Extract DOI from hit and create fetch task
+#     async def process_hit(client: httpx.AsyncClient, hit: SearchHit) -> None:
+#         """Extract DOI from hit and fetch/apply extensions and relevant tools."""
+#         doi = None
+#         try:
+#             if hit.id.startswith("http"):
+#                 parsed = urlparse(hit.id)
+#                 if "doi.org" in parsed.netloc:
+#                     doi = unquote(parsed.path.lstrip("/"))
+#             else:
+#                 doi = hit.id
+#         except Exception:
+#             return
+#         if not doi:
+#             return
 
-        # Fetch file extensions
-        fm = await fetch_extensions(client, doi)
-        if fm:
-            hit.file_extensions = fm.extensions
-            logger.info(f"📁 https://doi.org/{doi} -> extensions: {fm.extensions}")
+#         # Fetch file extensions
+#         fm = await fetch_extensions(client, doi)
+#         if fm:
+#             hit.file_extensions = fm.extensions
+#             logger.info(f"📁 https://doi.org/{doi} -> extensions: {fm.extensions}")
 
-            # Fetch relevant tools for each extension
-            all_tools = []
-            for ext in fm.extensions:
-                tools_data = await fetch_tools_for_extension(client, ext)
-                if tools_data:
-                    try:
-                        for tool_dict in tools_data:
-                            tool = ToolRegistryTool.model_validate(tool_dict)
-                            all_tools.append(tool)
-                            logger.info(f"🔧 {ext} -> tool: {tool.tool_label}")
-                    except Exception as e:
-                        logger.warning(f"Error parsing tool data for {ext}: {e}")
+#             # Fetch relevant tools for each extension
+#             all_tools = []
+#             for ext in fm.extensions:
+#                 tools_data = await fetch_tools_for_extension(client, ext)
+#                 if tools_data:
+#                     try:
+#                         for tool_dict in tools_data:
+#                             tool = ToolRegistryTool.model_validate(tool_dict)
+#                             all_tools.append(tool)
+#                             logger.info(f"🔧 {ext} -> tool: {tool.tool_label}")
+#                     except Exception as e:
+#                         logger.warning(f"Error parsing tool data for {ext}: {e}")
 
-            # Remove duplicates by tool_uri while preserving order
-            seen = set()
-            unique_tools = []
-            for tool in all_tools:
-                if tool.tool_uri not in seen:
-                    seen.add(tool.tool_uri)
-                    unique_tools.append(tool)
+#             # Remove duplicates by tool_uri while preserving order
+#             seen = set()
+#             unique_tools = []
+#             for tool in all_tools:
+#                 if tool.tool_uri not in seen:
+#                     seen.add(tool.tool_uri)
+#                     unique_tools.append(tool)
 
-            hit.relevant_tools = unique_tools
+#             hit.relevant_tools = unique_tools
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        await asyncio.gather(*(process_hit(client, hit) for hit in search_hits))
+#     async with httpx.AsyncClient(timeout=10.0) as client:
+#         await asyncio.gather(*(process_hit(client, hit) for hit in search_hits))
