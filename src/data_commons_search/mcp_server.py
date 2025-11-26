@@ -1,4 +1,5 @@
 import argparse
+import json
 from typing import Any
 from urllib.parse import quote
 
@@ -13,6 +14,7 @@ from data_commons_search.models import (
     OpenSearchResults,
     SearchHit,
 )
+from data_commons_search.utils import logger
 
 # Create MCP server https://github.com/modelcontextprotocol/python-sdk
 mcp = FastMCP(
@@ -60,6 +62,9 @@ async def search_data(
         #     }
         # }
     ]
+    logger.debug(
+        f"Search: `{search_input}` | start_date: {start_date} | end_date: {end_date} | creator_name: {creator_name}"
+    )
 
     if start_date or end_date:
         date_range = {"format": "yyyy-MM-dd"}
@@ -120,6 +125,7 @@ async def search_data(
             }
         },
     }
+    logger.debug(f"OpenSearch query body: {json.dumps(body, indent=2)}")
     try:
         resp = opensearch_client.search(index=settings.opensearch_index, body=body)
     except Exception as e:
