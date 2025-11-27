@@ -9,4 +9,4 @@ services:
     env_file:
       - keys.env
     volumes:
-      - ./data:/data # For logs
+      - ./data:/app/data # For logs

@@ -1,4 +1,5 @@
 import argparse
+import json
 from typing import Any
 from urllib.parse import quote
 
@@ -99,7 +100,7 @@ async def search_data(
         )
 
     emb: dict[str, Any] = {
-        "vector": embedding,
+        "vector": embedding.tolist(),
         "k": settings.opensearch_results_count,
     }
     if filters:
@@ -125,10 +126,12 @@ async def search_data(
         },
     }
     # logger.debug(f"OpenSearch query body: {json.dumps(body, indent=2)}")
+    logger.debug(f"OpenSearch query filters: {json.dumps(filters, indent=2)}")
     try:
         resp = opensearch_client.search(index=settings.opensearch_index, body=body)
     except Exception as e:
-        raise Exception(f"OpenSearch query failed: {e}") from e
+        logger.error(f"OpenSearch query failed: {e}")
+        return OpenSearchResults(total_found=0, hits=[])
     # Extract hits from OpenSearch response
     res = OpenSearchResults(
         total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
