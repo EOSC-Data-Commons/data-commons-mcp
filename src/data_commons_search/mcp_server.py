@@ -84,19 +84,20 @@ async def search_data(
     # Glucose level changes in the liver of individuals with type 1 diabetes from 1980 to 2020 by Westerink
     if creator_name:
         filters.append(
-            {
-                "nested": {
-                    "path": "creators",
-                    "query": {
-                        "wildcard": {
-                            "creators.creatorName": {
-                                "value": f"*{creator_name}*",
-                                "case_insensitive": True,
-                            }
-                        }
-                    },
-                }
-            }
+            {"query_string": {"query": f"*{creator_name}*", "default_field": "_creator", "default_operator": "AND"}}
+            # {
+            #     "nested": {
+            #         "path": "creators",
+            #         "query": {
+            #             "wildcard": {
+            #                 "creators.creatorName": {
+            #                     "value": f"*{creator_name}*",
+            #                     "case_insensitive": True,
+            #                 }
+            #             }
+            #         },
+            #     }
+            # }
         )
 
     emb: dict[str, Any] = {

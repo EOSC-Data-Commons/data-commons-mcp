@@ -155,7 +155,7 @@ SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_co
 
 > [!IMPORTANT]
 >
-> To build and integrate the frontend web app to the server, from the [frontend folder](https://github.com/EOSC-Data-Commons/eoscdcpoc) run:
+> To build and integrate the frontend web app to the server, from the [matchmaker frontend folder](https://github.com/EOSC-Data-Commons/matchmaker) run:
 >
 > ```sh
 > npm run build && rm -rf ../data-commons-search/src/data_commons_search/webapp/ && cp -R dist/spa/ ../data-commons-search/src/data_commons_search/webapp/
